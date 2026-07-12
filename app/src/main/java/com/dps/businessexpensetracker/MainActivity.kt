@@ -2,6 +2,8 @@ package com.dps.businessexpensetracker
 
 import android.content.Context
 import android.content.Intent
+import android.app.DatePickerDialog
+import android.app.Activity
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -12,8 +14,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,31 +40,45 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Notes
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.ReceiptLong
+import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Business
 import androidx.compose.material.icons.outlined.CalendarToday
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.FilterList
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Keyboard
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -70,13 +88,17 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -87,13 +109,29 @@ import com.dps.businessexpensetracker.data.ExpenseExport
 import com.dps.businessexpensetracker.data.ExpenseExportFormat
 import com.dps.businessexpensetracker.data.ExpenseExporter
 import com.dps.businessexpensetracker.data.ExpenseCategory
+import com.dps.businessexpensetracker.data.ExpenseBackupManager
+import com.dps.businessexpensetracker.data.BackupRestoreResult
 import com.dps.businessexpensetracker.data.ExpenseDraft
 import com.dps.businessexpensetracker.data.ExpenseRepository
 import com.dps.businessexpensetracker.data.ExpenseStatus
 import com.dps.businessexpensetracker.data.PaymentMethod
+import com.dps.businessexpensetracker.data.ExtractionConfidence
+import com.dps.businessexpensetracker.data.InvoiceExtractionResult
+import com.dps.businessexpensetracker.data.InvoiceScanProcessor
 import com.dps.businessexpensetracker.data.inrCurrencyFormatter
+import com.dps.businessexpensetracker.data.isDuplicateInvoiceNumber
+import com.dps.businessexpensetracker.data.expenseDraftFromState
+import com.dps.businessexpensetracker.data.toStateString
 import com.dps.businessexpensetracker.data.validateExpenseDraft
+import com.dps.businessexpensetracker.ui.GuidedTourOverlay
+import com.dps.businessexpensetracker.ui.GuidedTourPrefs
+import com.dps.businessexpensetracker.ui.TourTargets
+import com.dps.businessexpensetracker.ui.expenseTourSteps
+import com.dps.businessexpensetracker.ui.tourTarget
 import com.dps.businessexpensetracker.ui.theme.BusinessExpenseTrackerTheme
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import java.text.NumberFormat
 import java.time.LocalDate
 import java.time.YearMonth
@@ -112,35 +150,232 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private val ExpenseDraftStateSaver = Saver<ExpenseDraft, String>(
+    save = { it.toStateString() },
+    restore = { expenseDraftFromState(it) }
+)
+
 @Composable
 private fun BusinessExpenseTrackerApp() {
     val context = LocalContext.current
     val repository = remember { ExpenseRepository(context) }
     var expenses by remember { mutableStateOf(sortedExpenses(repository.loadExpenses())) }
-    var editingExpense by remember { mutableStateOf<Expense?>(null) }
-    var creatingExpense by remember { mutableStateOf(false) }
-    var pendingDelete by remember { mutableStateOf<Expense?>(null) }
+    var editingExpenseId by rememberSaveable { mutableStateOf<String?>(null) }
+    var creatingDraftState by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var scanInProgress by remember { mutableStateOf(false) }
+    var extractionReview by remember { mutableStateOf<InvoiceExtractionResult?>(null) }
+    var automaticBackupUri by remember {
+        mutableStateOf(ExpenseBackupManager.configuredBackupUri(context))
+    }
+    var pendingRestore by remember { mutableStateOf<BackupRestoreResult?>(null) }
+    val editingExpense = expenses.firstOrNull { it.id == editingExpenseId }
+    val creatingDraft = creatingDraftState?.let(::expenseDraftFromState)
+    val pendingDelete = expenses.firstOrNull { it.id == pendingDeleteId }
 
     fun persist(updated: List<Expense>) {
         val sorted = sortedExpenses(updated)
         repository.saveExpenses(sorted)
         expenses = sorted
+        ExpenseBackupManager.writeAutomaticBackup(context, sorted) {
+            automaticBackupUri = null
+            Toast.makeText(
+                context,
+                "Automatic backup stopped because the backup file is no longer writable.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    fun writeBackup(uri: Uri, enableAutomaticUpdates: Boolean) {
+        if (enableAutomaticUpdates) {
+            ExpenseBackupManager.configureAutomaticBackup(context, uri)
+            automaticBackupUri = uri
+        }
+        ExpenseBackupManager.writeBackup(
+            context = context,
+            targetUri = uri,
+            expenses = expenses,
+            onSuccess = { result ->
+                val attachmentNote = if (result.missingAttachmentCount == 0) {
+                    "${result.attachmentCount} attachments included"
+                } else {
+                    "${result.attachmentCount} attachments included; ${result.missingAttachmentCount} unavailable"
+                }
+                Toast.makeText(
+                    context,
+                    "Backup saved: ${result.expenseCount} expenses, $attachmentNote.",
+                    Toast.LENGTH_LONG
+                ).show()
+            },
+            onFailure = { error ->
+                if (enableAutomaticUpdates) {
+                    ExpenseBackupManager.disableAutomaticBackup(context)
+                    automaticBackupUri = null
+                }
+                Toast.makeText(
+                    context,
+                    "Backup failed: ${error.message ?: "unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        )
+    }
+
+    val backupFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val permissionPersisted = runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }.isSuccess
+        writeBackup(uri, enableAutomaticUpdates = permissionPersisted)
+        if (!permissionPersisted) {
+            Toast.makeText(
+                context,
+                "Backup created, but this storage provider cannot keep it updated automatically.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+    val restoreFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        ExpenseBackupManager.restoreBackup(
+            context = context,
+            sourceUri = uri,
+            onSuccess = { pendingRestore = it },
+            onFailure = { error ->
+                Toast.makeText(
+                    context,
+                    "Restore failed: ${error.message ?: "invalid backup file"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        )
+    }
+
+    fun applyLearnedDefaults(result: InvoiceExtractionResult): InvoiceExtractionResult {
+        val vendor = result.draft.vendor.trim()
+        val previous = expenses
+            .filter { vendor.isNotBlank() && it.vendor.equals(vendor, ignoreCase = true) }
+            .maxByOrNull { it.updatedAt }
+        return if (previous == null) {
+            result
+        } else {
+            result.copy(
+                draft = result.draft.copy(
+                    category = previous.category,
+                    paymentMethod = previous.paymentMethod,
+                    submittedBy = previous.submittedBy
+                )
+            )
+        }
+    }
+
+    fun processInvoicePage(uri: Uri) {
+        scanInProgress = true
+        InvoiceScanProcessor.process(
+            context = context,
+            sourceUri = uri,
+            onSuccess = { rawResult ->
+                val result = applyLearnedDefaults(rawResult)
+                extractionReview = result
+                creatingDraftState = result.draft.toStateString()
+                scanInProgress = false
+            },
+            onFailure = { error ->
+                scanInProgress = false
+                Toast.makeText(
+                    context,
+                    "Couldn't read this invoice: ${error.message ?: "unknown error"}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        )
+    }
+
+    val scanner = remember {
+        GmsDocumentScanning.getClient(
+            GmsDocumentScannerOptions.Builder()
+                .setGalleryImportAllowed(true)
+                .setPageLimit(1)
+                .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
+                .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+                .build()
+        )
+    }
+    val scanLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { activityResult ->
+        if (activityResult.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val scannedPage = GmsDocumentScanningResult
+            .fromActivityResultIntent(activityResult.data)
+            ?.pages
+            ?.firstOrNull()
+            ?.imageUri
+        if (scannedPage == null) {
+            Toast.makeText(context, "No scanned page was returned.", Toast.LENGTH_LONG).show()
+            return@rememberLauncherForActivityResult
+        }
+        processInvoicePage(scannedPage)
+    }
+    val invoiceImportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let(::processInvoicePage)
+    }
+
+    fun startInvoiceScan() {
+        val activity = context as? Activity ?: return
+        scanner.getStartScanIntent(activity)
+            .addOnSuccessListener { intentSender ->
+                scanLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+            }
+            .addOnFailureListener {
+                Toast.makeText(
+                    context,
+                    "Scanner unavailable. Try importing an invoice image instead.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
     }
 
     when {
-        creatingExpense || editingExpense != null -> {
-            val initialDraft = editingExpense?.let(ExpenseDraft::fromExpense) ?: ExpenseDraft()
+        scanInProgress -> ScanningInvoiceScreen()
+
+        creatingDraft != null || editingExpense != null -> {
+            val initialDraft = editingExpense?.let(ExpenseDraft::fromExpense) ?: creatingDraft!!
             ExpenseEditorScreen(
                 initialDraft = initialDraft,
+                existingInvoiceNumbers = expenses
+                    .filterNot { it.id == editingExpense?.id }
+                    .map { it.invoiceNumber },
+                extractionReview = extractionReview,
                 onCancel = {
-                    creatingExpense = false
-                    editingExpense = null
+                    if (editingExpense == null) {
+                        releaseAttachmentPermission(context, creatingDraft?.attachmentUri)
+                    }
+                    creatingDraftState = null
+                    editingExpenseId = null
+                    extractionReview = null
                 },
                 onSave = { savedExpense ->
                     val withoutPrevious = expenses.filterNot { it.id == savedExpense.id }
                     persist(withoutPrevious + savedExpense)
-                    creatingExpense = false
-                    editingExpense = null
+                    editingExpense?.attachmentUri
+                        ?.takeIf { it != savedExpense.attachmentUri }
+                        ?.let { releaseAttachmentPermission(context, it) }
+                    creatingDraft?.attachmentUri
+                        ?.takeIf { it != savedExpense.attachmentUri }
+                        ?.let { releaseAttachmentPermission(context, it) }
+                    creatingDraftState = null
+                    editingExpenseId = null
+                    extractionReview = null
                 }
             )
         }
@@ -148,9 +383,55 @@ private fun BusinessExpenseTrackerApp() {
         else -> {
             ExpenseHomeScreen(
                 expenses = expenses,
-                onAddExpense = { creatingExpense = true },
-                onEditExpense = { editingExpense = it },
-                onDeleteExpense = { pendingDelete = it },
+                onAddExpense = {
+                    extractionReview = null
+                    creatingDraftState = ExpenseDraft().toStateString()
+                },
+                onScanInvoice = ::startInvoiceScan,
+                onImportInvoice = { invoiceImportLauncher.launch(arrayOf("image/*")) },
+                automaticBackupEnabled = automaticBackupUri != null,
+                onChooseBackupFile = {
+                    val date = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
+                    backupFileLauncher.launch("business-expenses-$date.betbackup.zip")
+                },
+                onBackupNow = {
+                    automaticBackupUri?.let { writeBackup(it, enableAutomaticUpdates = true) }
+                },
+                onRestoreBackup = {
+                    restoreFileLauncher.launch(
+                        arrayOf("application/zip", "application/octet-stream")
+                    )
+                },
+                onDisableAutomaticBackup = {
+                    ExpenseBackupManager.disableAutomaticBackup(context)
+                    automaticBackupUri = null
+                    Toast.makeText(context, "Automatic backup turned off.", Toast.LENGTH_SHORT)
+                        .show()
+                },
+                onEditExpense = { editingExpenseId = it.id },
+                onDuplicateExpense = { expense ->
+                    extractionReview = null
+                    creatingDraftState = ExpenseDraft.fromExpense(expense).copy(
+                        id = null,
+                        date = LocalDate.now().toString(),
+                        status = ExpenseStatus.DRAFT,
+                        invoiceNumber = "",
+                        attachmentUri = null,
+                        attachmentName = null
+                    ).toStateString()
+                },
+                onStatusChange = { expense, status ->
+                    persist(
+                        expenses.map {
+                            if (it.id == expense.id) {
+                                it.copy(status = status, updatedAt = System.currentTimeMillis())
+                            } else {
+                                it
+                            }
+                        }
+                    )
+                },
+                onDeleteExpense = { pendingDeleteId = it.id },
                 onOpenAttachment = { openAttachment(context, it.attachmentUri) }
             )
         }
@@ -158,22 +439,88 @@ private fun BusinessExpenseTrackerApp() {
 
     pendingDelete?.let { expense ->
         AlertDialog(
-            onDismissRequest = { pendingDelete = null },
+            onDismissRequest = { pendingDeleteId = null },
             title = { Text("Delete expense") },
             text = { Text("Delete ${expense.vendor} from the expense register?") },
             confirmButton = {
                 TextButton(
                     onClick = {
+                        releaseAttachmentPermission(context, expense.attachmentUri)
                         persist(expenses.filterNot { it.id == expense.id })
-                        pendingDelete = null
+                        pendingDeleteId = null
                     }
                 ) {
                     Text("Delete")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) {
+                TextButton(onClick = { pendingDeleteId = null }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    pendingRestore?.let { restore ->
+        AlertDialog(
+            onDismissRequest = {
+                ExpenseBackupManager.discardRestore(restore)
+                pendingRestore = null
+            },
+            title = { Text("Restore ${recordCountLabel(restore.expenses.size)}?") },
+            text = {
+                Text(
+                    "The backup contains ${restore.expenses.size} expenses and " +
+                        "${restore.attachmentCount} attachments. Merge keeps current records; " +
+                        "Replace removes current records first."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val restoredById = restore.expenses.associateBy { it.id }
+                        expenses.forEach { existing ->
+                            restoredById[existing.id]
+                                ?.takeIf { it.attachmentUri != existing.attachmentUri }
+                                ?.let { releaseAttachmentPermission(context, existing.attachmentUri) }
+                        }
+                        val merged = expenses.associateBy { it.id }.toMutableMap()
+                        restore.expenses.forEach { merged[it.id] = it }
+                        persist(merged.values.toList())
+                        pendingRestore = null
+                        Toast.makeText(context, "Backup merged successfully.", Toast.LENGTH_LONG)
+                            .show()
+                    }
+                ) {
+                    Text("Merge")
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(
+                        onClick = {
+                            expenses.forEach {
+                                releaseAttachmentPermission(context, it.attachmentUri)
+                            }
+                            persist(restore.expenses)
+                            pendingRestore = null
+                            Toast.makeText(
+                                context,
+                                "Backup restored successfully.",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    ) {
+                        Text("Replace", color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(
+                        onClick = {
+                            ExpenseBackupManager.discardRestore(restore)
+                            pendingRestore = null
+                        }
+                    ) {
+                        Text("Cancel")
+                    }
                 }
             }
         )
@@ -185,7 +532,16 @@ private fun BusinessExpenseTrackerApp() {
 private fun ExpenseHomeScreen(
     expenses: List<Expense>,
     onAddExpense: () -> Unit,
+    onScanInvoice: () -> Unit,
+    onImportInvoice: () -> Unit,
+    automaticBackupEnabled: Boolean,
+    onChooseBackupFile: () -> Unit,
+    onBackupNow: () -> Unit,
+    onRestoreBackup: () -> Unit,
+    onDisableAutomaticBackup: () -> Unit,
     onEditExpense: (Expense) -> Unit,
+    onDuplicateExpense: (Expense) -> Unit,
+    onStatusChange: (Expense, ExpenseStatus) -> Unit,
     onDeleteExpense: (Expense) -> Unit,
     onOpenAttachment: (Expense) -> Unit
 ) {
@@ -193,159 +549,458 @@ private fun ExpenseHomeScreen(
     var query by rememberSaveable { mutableStateOf("") }
     var statusFilterName by rememberSaveable { mutableStateOf("") }
     var categoryFilterName by rememberSaveable { mutableStateOf("") }
+    var sortOptionName by rememberSaveable { mutableStateOf(ExpenseSortOption.NEWEST.name) }
     var exportMenuExpanded by remember { mutableStateOf(false) }
-    var pendingExport by remember { mutableStateOf<ExpenseExport?>(null) }
+    var dataMenuExpanded by remember { mutableStateOf(false) }
+    var addSheetVisible by remember { mutableStateOf(false) }
+    val tourSteps = remember { expenseTourSteps() }
+    val tourTargetBounds = remember { mutableStateMapOf<String, Rect>() }
+    // Deliberately not saveable: after recreation the preference is the source
+    // of truth, so a finished tour stays dismissed and an unfinished one returns.
+    var tourActive by remember { mutableStateOf(!GuidedTourPrefs.isTourSeen(context)) }
+    var tourStepIndex by rememberSaveable { mutableStateOf(0) }
+
+    fun finishTour() {
+        tourActive = false
+        tourStepIndex = 0
+        GuidedTourPrefs.markTourSeen(context)
+    }
+    val currencyFormatter = remember { inrCurrencyFormatter() }
+    val selectedStatus = ExpenseStatus.entries.firstOrNull { it.name == statusFilterName }
+    val selectedCategory = ExpenseCategory.entries.firstOrNull { it.name == categoryFilterName }
+    val selectedSort = ExpenseSortOption.entries
+        .firstOrNull { it.name == sortOptionName } ?: ExpenseSortOption.NEWEST
+    val hasActiveFilters = query.isNotBlank() || selectedStatus != null || selectedCategory != null
+    val filteredExpenses = remember(
+        expenses,
+        query,
+        statusFilterName,
+        categoryFilterName,
+        sortOptionName
+    ) {
+        expenses.filter { expense ->
+            val searchText = listOf(
+                expense.vendor,
+                expense.invoiceNumber,
+                expense.supplierGstin,
+                expense.submittedBy,
+                expense.notes,
+                expense.category.label,
+                expense.status.label
+            ).joinToString(" ").lowercase(Locale.ROOT)
+            val matchesSearch = query.isBlank() ||
+                searchText.contains(query.trim().lowercase(Locale.ROOT))
+            val matchesStatus = selectedStatus == null || expense.status == selectedStatus
+            val matchesCategory = selectedCategory == null || expense.category == selectedCategory
+            matchesSearch && matchesStatus && matchesCategory
+        }.sortedWith(selectedSort.comparator)
+    }
     val csvExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument(ExpenseExportFormat.CSV.mimeType),
         onResult = { uri ->
-            pendingExport?.let { export -> saveExportToUri(context, uri, export) }
-            pendingExport = null
+            saveExportToUri(
+                context,
+                uri,
+                ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.CSV)
+            )
         }
     )
     val htmlExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument(ExpenseExportFormat.HTML.mimeType),
         onResult = { uri ->
-            pendingExport?.let { export -> saveExportToUri(context, uri, export) }
-            pendingExport = null
+            saveExportToUri(
+                context,
+                uri,
+                ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.HTML)
+            )
         }
     )
-    val currencyFormatter = remember { inrCurrencyFormatter() }
-    val selectedStatus = ExpenseStatus.entries.firstOrNull { it.name == statusFilterName }
-    val selectedCategory = ExpenseCategory.entries.firstOrNull { it.name == categoryFilterName }
-    val filteredExpenses = remember(expenses, query, statusFilterName, categoryFilterName) {
-        expenses.filter { expense ->
-            val searchText = listOf(
-                expense.vendor,
-                expense.invoiceNumber,
-                expense.submittedBy,
-                expense.notes,
-                expense.category.label,
-                expense.status.label
-            ).joinToString(" ").lowercase()
-            val matchesSearch = query.isBlank() || searchText.contains(query.trim().lowercase())
-            val matchesStatus = selectedStatus == null || expense.status == selectedStatus
-            val matchesCategory = selectedCategory == null || expense.category == selectedCategory
-            matchesSearch && matchesStatus && matchesCategory
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                CenterAlignedTopAppBar(
+                    title = {
+                        Text(
+                            text = "Expense Tracker",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    },
+                    actions = {
+                        Box(modifier = Modifier.tourTarget(tourTargetBounds, TourTargets.EXPORT)) {
+                            IconButton(
+                                onClick = { exportMenuExpanded = true },
+                                enabled = filteredExpenses.isNotEmpty()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.FileDownload,
+                                    contentDescription = "Export records"
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = exportMenuExpanded,
+                                onDismissRequest = { exportMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Export current view as CSV") },
+                                    onClick = {
+                                        exportMenuExpanded = false
+                                        val export = ExpenseExporter.create(
+                                            expenses = filteredExpenses,
+                                            format = ExpenseExportFormat.CSV
+                                        )
+                                        csvExportLauncher.launch(export.fileName)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Export current view as HTML") },
+                                    onClick = {
+                                        exportMenuExpanded = false
+                                        val export = ExpenseExporter.create(
+                                            expenses = filteredExpenses,
+                                            format = ExpenseExportFormat.HTML
+                                        )
+                                        htmlExportLauncher.launch(export.fileName)
+                                    }
+                                )
+                            }
+                        }
+                        Box(modifier = Modifier.tourTarget(tourTargetBounds, TourTargets.BACKUP)) {
+                            IconButton(onClick = { dataMenuExpanded = true }) {
+                                Icon(Icons.Outlined.MoreVert, contentDescription = "Backup and restore")
+                            }
+                            DropdownMenu(
+                                expanded = dataMenuExpanded,
+                                onDismissRequest = { dataMenuExpanded = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Choose backup file") },
+                                    leadingIcon = { Icon(Icons.Outlined.Backup, contentDescription = null) },
+                                    onClick = {
+                                        dataMenuExpanded = false
+                                        onChooseBackupFile()
+                                    }
+                                )
+                                if (automaticBackupEnabled) {
+                                    DropdownMenuItem(
+                                        text = { Text("Update backup now") },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.CheckCircle, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            dataMenuExpanded = false
+                                            onBackupNow()
+                                        }
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text("Restore from backup") },
+                                    leadingIcon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
+                                    onClick = {
+                                        dataMenuExpanded = false
+                                        onRestoreBackup()
+                                    }
+                                )
+                                if (automaticBackupEnabled) {
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = { Text("Turn off automatic backup") },
+                                        onClick = {
+                                            dataMenuExpanded = false
+                                            onDisableAutomaticBackup()
+                                        }
+                                    )
+                                }
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = { Text("Replay app tour") },
+                                    leadingIcon = {
+                                        Icon(
+                                            Icons.AutoMirrored.Outlined.HelpOutline,
+                                            contentDescription = null
+                                        )
+                                    },
+                                    onClick = {
+                                        dataMenuExpanded = false
+                                        tourStepIndex = 0
+                                        tourActive = true
+                                    }
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    )
+                )
+            },
+            floatingActionButton = {
+                FloatingActionButton(
+                    onClick = { addSheetVisible = true },
+                    modifier = Modifier.tourTarget(tourTargetBounds, TourTargets.ADD_EXPENSE)
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = "Add expense")
+                }
+            }
+        ) { innerPadding ->
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item {
+                    Box(
+                        modifier = Modifier.tourTarget(tourTargetBounds, TourTargets.DASHBOARD)
+                    ) {
+                        DashboardSummary(
+                            expenses = expenses,
+                            currencyFormatter = currencyFormatter
+                        )
+                    }
+                }
+
+                item {
+                    Box(
+                        modifier = Modifier.tourTarget(
+                            tourTargetBounds,
+                            TourTargets.SEARCH_FILTERS
+                        )
+                    ) {
+                        SearchAndFilters(
+                            query = query,
+                            onQueryChange = { query = it },
+                            statusFilterName = statusFilterName,
+                            onStatusFilterChange = { statusFilterName = it },
+                            categoryFilterName = categoryFilterName,
+                            onCategoryFilterChange = { categoryFilterName = it },
+                            sortOptionName = sortOptionName,
+                            onSortOptionChange = { sortOptionName = it },
+                            hasActiveFilters = hasActiveFilters,
+                            onClearFilters = {
+                                query = ""
+                                statusFilterName = ""
+                                categoryFilterName = ""
+                            }
+                        )
+                    }
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Expenses",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = recordCountLabel(filteredExpenses.size),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (filteredExpenses.isEmpty()) {
+                    item {
+                        EmptyExpenseState(
+                            hasExpenses = expenses.isNotEmpty(),
+                            onAddExpense = { addSheetVisible = true },
+                            onClearFilters = {
+                                query = ""
+                                statusFilterName = ""
+                                categoryFilterName = ""
+                            }
+                        )
+                    }
+                } else {
+                    items(filteredExpenses, key = { it.id }) { expense ->
+                        ExpenseListItem(
+                            expense = expense,
+                            currencyFormatter = currencyFormatter,
+                            onEdit = { onEditExpense(expense) },
+                            onDuplicate = { onDuplicateExpense(expense) },
+                            onStatusChange = { onStatusChange(expense, it) },
+                            onDelete = { onDeleteExpense(expense) },
+                            onOpenAttachment = { onOpenAttachment(expense) }
+                        )
+                    }
+                }
+            }
+        }
+
+        if (tourActive) {
+            GuidedTourOverlay(
+                steps = tourSteps,
+                stepIndex = tourStepIndex,
+                targetBounds = tourTargetBounds,
+                onStepChange = { tourStepIndex = it },
+                onFinish = ::finishTour
+            )
         }
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        text = "Expense Tracker",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+    if (addSheetVisible) {
+        ModalBottomSheet(onDismissRequest = { addSheetVisible = false }) {
+            AddExpenseOptions(
+                onScanInvoice = {
+                    addSheetVisible = false
+                    onScanInvoice()
                 },
-                actions = {
-                    Box {
-                        IconButton(
-                            onClick = { exportMenuExpanded = true },
-                            enabled = expenses.isNotEmpty()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.FileDownload,
-                                contentDescription = "Export records"
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = exportMenuExpanded,
-                            onDismissRequest = { exportMenuExpanded = false }
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Export CSV") },
-                                onClick = {
-                                    exportMenuExpanded = false
-                                    pendingExport = ExpenseExporter.create(
-                                        expenses = expenses,
-                                        format = ExpenseExportFormat.CSV
-                                    )
-                                    pendingExport?.let { csvExportLauncher.launch(it.fileName) }
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Export HTML report") },
-                                onClick = {
-                                    exportMenuExpanded = false
-                                    pendingExport = ExpenseExporter.create(
-                                        expenses = expenses,
-                                        format = ExpenseExportFormat.HTML
-                                    )
-                                    pendingExport?.let { htmlExportLauncher.launch(it.fileName) }
-                                }
-                            )
-                        }
-                    }
+                onImportInvoice = {
+                    addSheetVisible = false
+                    onImportInvoice()
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                )
+                onManualEntry = {
+                    addSheetVisible = false
+                    onAddExpense()
+                }
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(onClick = onAddExpense) {
-                Icon(Icons.Outlined.Add, contentDescription = "Add expense")
-            }
         }
-    ) { innerPadding ->
-        LazyColumn(
+    }
+}
+
+@Composable
+private fun ScanningInvoiceScreen() {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            item {
-                DashboardSummary(
-                    expenses = expenses,
-                    currencyFormatter = currencyFormatter
-                )
-            }
+            CircularProgressIndicator()
+            Spacer(Modifier.height(20.dp))
+            Text(
+                text = "Reading invoice",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Extracting fields, checking totals and looking for QR data…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
 
-            item {
-                SearchAndFilters(
-                    query = query,
-                    onQueryChange = { query = it },
-                    statusFilterName = statusFilterName,
-                    onStatusFilterChange = { statusFilterName = it },
-                    categoryFilterName = categoryFilterName,
-                    onCategoryFilterChange = { categoryFilterName = it }
+@Composable
+private fun AddExpenseOptions(
+    onScanInvoice: () -> Unit,
+    onImportInvoice: () -> Unit,
+    onManualEntry: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 20.dp, end = 20.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = "Add an expense",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = "Scan a bill to prefill the details, or enter them yourself.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onScanInvoice),
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.DocumentScanner,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
                 )
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Spacer(Modifier.width(14.dp))
+                Column {
                     Text(
-                        text = "Expenses",
+                        text = "Scan invoice",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Camera or gallery · processed on device",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+        }
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onImportInvoice)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Outlined.Image, contentDescription = null)
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text(
+                        text = "Import invoice image",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "${filteredExpenses.size} records",
-                        style = MaterialTheme.typography.labelLarge,
+                        text = "Use an existing photo from this device",
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-
-            if (filteredExpenses.isEmpty()) {
-                item {
-                    EmptyExpenseState(onAddExpense = onAddExpense)
-                }
-            } else {
-                items(filteredExpenses, key = { it.id }) { expense ->
-                    ExpenseListItem(
-                        expense = expense,
-                        currencyFormatter = currencyFormatter,
-                        onEdit = { onEditExpense(expense) },
-                        onDelete = { onDeleteExpense(expense) },
-                        onOpenAttachment = { onOpenAttachment(expense) }
+        }
+        ElevatedCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onManualEntry)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Outlined.Keyboard, contentDescription = null)
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text(
+                        text = "Enter manually",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "Use the standard expense form",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -360,89 +1015,84 @@ private fun DashboardSummary(
 ) {
     val summary = remember(expenses) { ExpenseSummary.from(expenses) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MetricCard(
-                label = "Total spend",
-                value = currencyFormatter.format(summary.totalSpend),
-                modifier = Modifier.weight(1f)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
             )
-            MetricCard(
-                label = "This month",
-                value = currencyFormatter.format(summary.thisMonthSpend),
-                modifier = Modifier.weight(1f)
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            MetricCard(
-                label = "Pending review",
-                value = summary.pendingCount.toString(),
-                modifier = Modifier.weight(1f)
-            )
-            MetricCard(
-                label = "Paid",
-                value = currencyFormatter.format(summary.paidSpend),
-                modifier = Modifier.weight(1f)
-            )
-        }
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Row(
+        ) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Total spend",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = currencyFormatter.format(summary.totalSpend),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.16f)
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        text = "Top category",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = "This month",
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        text = summary.topCategory,
-                        style = MaterialTheme.typography.titleMedium,
+                        text = currencyFormatter.format(summary.thisMonthSpend),
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.ReceiptLong,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
             }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            SummaryPill("Pending", summary.pendingCount.toString())
+            SummaryPill("Paid", currencyFormatter.format(summary.paidSpend))
+            SummaryPill("Top category", summary.topCategory)
         }
     }
 }
 
 @Composable
-private fun MetricCard(
-    label: String,
-    value: String,
-    modifier: Modifier = Modifier
-) {
-    ElevatedCard(modifier = modifier.height(104.dp)) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+private fun SummaryPill(label: String, value: String) {
+    Surface(
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
                 text = value,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
@@ -455,16 +1105,29 @@ private fun SearchAndFilters(
     statusFilterName: String,
     onStatusFilterChange: (String) -> Unit,
     categoryFilterName: String,
-    onCategoryFilterChange: (String) -> Unit
+    onCategoryFilterChange: (String) -> Unit,
+    sortOptionName: String,
+    onSortOptionChange: (String) -> Unit,
+    hasActiveFilters: Boolean,
+    onClearFilters: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         OutlinedTextField(
             value = query,
             onValueChange = onQueryChange,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("expense_search"),
             singleLine = true,
             leadingIcon = {
                 Icon(Icons.Outlined.Search, contentDescription = null)
+            },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Clear search")
+                    }
+                }
             },
             label = { Text("Search vendor, invoice, notes") }
         )
@@ -497,6 +1160,18 @@ private fun SearchAndFilters(
                 options = listOf("" to "All") + ExpenseCategory.entries.map { it.name to it.label },
                 onSelected = onCategoryFilterChange
             )
+            FilterMenuButton(
+                label = "Sort",
+                selectedText = ExpenseSortOption.entries
+                    .firstOrNull { it.name == sortOptionName }
+                    ?.label ?: ExpenseSortOption.NEWEST.label,
+                options = ExpenseSortOption.entries.map { it.name to it.label },
+                onSelected = onSortOptionChange,
+                showSortIcon = true
+            )
+            if (hasActiveFilters) {
+                TextButton(onClick = onClearFilters) { Text("Clear") }
+            }
         }
     }
 }
@@ -506,12 +1181,24 @@ private fun FilterMenuButton(
     label: String,
     selectedText: String,
     options: List<Pair<String, String>>,
-    onSelected: (String) -> Unit
+    onSelected: (String) -> Unit,
+    showSortIcon: Boolean = false
 ) {
     var expanded by remember { mutableStateOf(false) }
 
     Box {
-        OutlinedButton(onClick = { expanded = true }) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.testTag("filter_button_$label")
+        ) {
+            if (showSortIcon) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Outlined.Sort,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+            }
             Text("$label: $selectedText", maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.width(6.dp))
             Icon(
@@ -523,6 +1210,7 @@ private fun FilterMenuButton(
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { (value, text) ->
                 DropdownMenuItem(
+                    modifier = Modifier.testTag("filter_option_${label}_$value"),
                     text = { Text(text) },
                     onClick = {
                         onSelected(value)
@@ -535,7 +1223,11 @@ private fun FilterMenuButton(
 }
 
 @Composable
-private fun EmptyExpenseState(onAddExpense: () -> Unit) {
+private fun EmptyExpenseState(
+    hasExpenses: Boolean,
+    onAddExpense: () -> Unit,
+    onClearFilters: () -> Unit
+) {
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -551,14 +1243,27 @@ private fun EmptyExpenseState(onAddExpense: () -> Unit) {
                 tint = MaterialTheme.colorScheme.primary
             )
             Text(
-                text = "No expenses recorded",
+                text = if (hasExpenses) "No matching expenses" else "No expenses yet",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
-            Button(onClick = onAddExpense) {
-                Icon(Icons.Outlined.Add, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Add expense")
+            Text(
+                text = if (hasExpenses) {
+                    "Try a different search or clear your filters."
+                } else {
+                    "Add your first bill or receipt to start tracking spend."
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (hasExpenses) {
+                OutlinedButton(onClick = onClearFilters) { Text("Clear filters") }
+            } else {
+                Button(onClick = onAddExpense) {
+                    Icon(Icons.Outlined.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Add expense")
+                }
             }
         }
     }
@@ -569,9 +1274,14 @@ private fun ExpenseListItem(
     expense: Expense,
     currencyFormatter: NumberFormat,
     onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
+    onStatusChange: (ExpenseStatus) -> Unit,
     onDelete: () -> Unit,
     onOpenAttachment: () -> Unit
 ) {
+    var actionsExpanded by remember { mutableStateOf(false) }
+    val nextStatus = expense.status.nextAction()
+
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -656,12 +1366,60 @@ private fun ExpenseListItem(
                     )
                 }
 
-                Row {
-                    IconButton(onClick = onEdit) {
-                        Icon(Icons.Outlined.Edit, contentDescription = "Edit expense")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    nextStatus?.let { (label, status) ->
+                        TextButton(onClick = { onStatusChange(status) }) {
+                            Icon(
+                                imageVector = Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(label)
+                        }
                     }
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Outlined.Delete, contentDescription = "Delete expense")
+                    Box {
+                        IconButton(onClick = { actionsExpanded = true }) {
+                            Icon(Icons.Outlined.MoreVert, contentDescription = "Expense actions")
+                        }
+                        DropdownMenu(
+                            expanded = actionsExpanded,
+                            onDismissRequest = { actionsExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Edit") },
+                                leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                                onClick = {
+                                    actionsExpanded = false
+                                    onEdit()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Duplicate") },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.ContentCopy, contentDescription = null)
+                                },
+                                onClick = {
+                                    actionsExpanded = false
+                                    onDuplicate()
+                                }
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Delete") },
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Outlined.Delete,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
+                                },
+                                onClick = {
+                                    actionsExpanded = false
+                                    onDelete()
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -703,21 +1461,61 @@ private fun StatusBadge(status: ExpenseStatus) {
 @Composable
 private fun ExpenseEditorScreen(
     initialDraft: ExpenseDraft,
+    existingInvoiceNumbers: List<String>,
+    extractionReview: InvoiceExtractionResult? = null,
     onCancel: () -> Unit,
     onSave: (Expense) -> Unit
 ) {
     val context = LocalContext.current
-    var draft by remember(initialDraft.id) { mutableStateOf(initialDraft) }
+    var draft by rememberSaveable(initialDraft.id, stateSaver = ExpenseDraftStateSaver) {
+        mutableStateOf(initialDraft)
+    }
     var validationMessage by remember { mutableStateOf<String?>(null) }
+    var showDiscardConfirmation by remember { mutableStateOf(false) }
+    val duplicateInvoice = isDuplicateInvoiceNumber(draft.invoiceNumber, existingInvoiceNumbers)
+    val isScannedDraft = initialDraft.id == null &&
+        initialDraft.attachmentUri?.toUri()?.authority == "${context.packageName}.fileprovider"
+
+    fun requestCancel() {
+        if (draft != initialDraft) {
+            showDiscardConfirmation = true
+        } else {
+            onCancel()
+        }
+    }
+
+    fun releaseTransientAttachment() {
+        draft.attachmentUri
+            ?.takeIf { it != initialDraft.attachmentUri }
+            ?.let { releaseAttachmentPermission(context, it) }
+    }
+
+    fun validateAndSave() {
+        val error = when {
+            duplicateInvoice -> "This invoice number is already used by another expense."
+            else -> validateExpenseDraft(draft)
+        }
+        if (error == null) onSave(draft.toExpense()) else validationMessage = error
+    }
     val documentPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
         onResult = { uri: Uri? ->
             if (uri != null) {
-                runCatching {
+                draft.attachmentUri
+                    ?.takeIf { it != initialDraft.attachmentUri && it != uri.toString() }
+                    ?.let { releaseAttachmentPermission(context, it) }
+                val permissionTaken = runCatching {
                     context.contentResolver.takePersistableUriPermission(
                         uri,
                         Intent.FLAG_GRANT_READ_URI_PERMISSION
                     )
+                }.isSuccess
+                if (!permissionTaken) {
+                    Toast.makeText(
+                        context,
+                        "This file may need to be selected again after a device restart.",
+                        Toast.LENGTH_LONG
+                    ).show()
                 }
                 draft = draft.copy(
                     attachmentUri = uri.toString(),
@@ -727,7 +1525,7 @@ private fun ExpenseEditorScreen(
         }
     )
 
-    BackHandler(onBack = onCancel)
+    BackHandler(onBack = ::requestCancel)
 
     Scaffold(
         topBar = {
@@ -736,20 +1534,13 @@ private fun ExpenseEditorScreen(
                     Text(if (initialDraft.id == null) "Add expense" else "Edit expense")
                 },
                 navigationIcon = {
-                    IconButton(onClick = onCancel) {
+                    IconButton(onClick = ::requestCancel) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
                     IconButton(
-                        onClick = {
-                            val error = validateExpenseDraft(draft)
-                            if (error == null) {
-                                onSave(draft.toExpense())
-                            } else {
-                                validationMessage = error
-                            }
-                        }
+                        onClick = ::validateAndSave
                     ) {
                         Icon(Icons.Outlined.Save, contentDescription = "Save expense")
                     }
@@ -767,6 +1558,11 @@ private fun ExpenseEditorScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            if (extractionReview != null || isScannedDraft) {
+                item {
+                    ExtractionReviewCard(extractionReview)
+                }
+            }
             item {
                 OutlinedTextField(
                     value = draft.vendor,
@@ -774,7 +1570,9 @@ private fun ExpenseEditorScreen(
                         draft = draft.copy(vendor = it)
                         validationMessage = null
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("vendor_field"),
                     singleLine = true,
                     label = { Text("Vendor") },
                     leadingIcon = { Icon(Icons.Outlined.Business, contentDescription = null) }
@@ -787,7 +1585,9 @@ private fun ExpenseEditorScreen(
                         draft = draft.copy(amount = it)
                         validationMessage = null
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("amount_field"),
                     singleLine = true,
                     label = { Text("Amount (INR)") },
                     leadingIcon = { Icon(Icons.Outlined.Payments, contentDescription = null) },
@@ -818,15 +1618,27 @@ private fun ExpenseEditorScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     OutlinedTextField(
                         value = draft.date,
-                        onValueChange = {
-                            draft = draft.copy(date = it)
-                            validationMessage = null
-                        },
-                        modifier = Modifier.weight(1f),
+                        onValueChange = {},
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("date_field"),
                         singleLine = true,
+                        readOnly = true,
                         label = { Text("Date") },
-                        leadingIcon = {
-                            Icon(Icons.Outlined.CalendarToday, contentDescription = null)
+                        trailingIcon = {
+                            IconButton(
+                                onClick = {
+                                    showDatePicker(context, draft.date) {
+                                        draft = draft.copy(date = it)
+                                        validationMessage = null
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Outlined.CalendarToday,
+                                    contentDescription = "Choose date"
+                                )
+                            }
                         }
                     )
                     EnumDropdownField(
@@ -846,7 +1658,9 @@ private fun ExpenseEditorScreen(
                         draft = draft.copy(submittedBy = it)
                         validationMessage = null
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("submitted_by_field"),
                     singleLine = true,
                     label = { Text("Submitted by") },
                     leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null) }
@@ -855,20 +1669,65 @@ private fun ExpenseEditorScreen(
             item {
                 OutlinedTextField(
                     value = draft.invoiceNumber,
-                    onValueChange = { draft = draft.copy(invoiceNumber = it) },
-                    modifier = Modifier.fillMaxWidth(),
+                    onValueChange = {
+                        draft = draft.copy(invoiceNumber = it)
+                        validationMessage = null
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("invoice_field"),
                     singleLine = true,
+                    isError = duplicateInvoice,
                     label = { Text("Invoice number") },
+                    supportingText = {
+                        if (duplicateInvoice) Text("Already used by another expense")
+                    },
                     leadingIcon = {
                         Icon(Icons.AutoMirrored.Outlined.ReceiptLong, contentDescription = null)
                     }
                 )
             }
             item {
+                OutlinedTextField(
+                    value = draft.supplierGstin,
+                    onValueChange = {
+                        draft = draft.copy(supplierGstin = it.uppercase().take(15))
+                        validationMessage = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Supplier GSTIN") },
+                    supportingText = { Text("Optional · 15 characters") },
+                    leadingIcon = {
+                        Icon(Icons.AutoMirrored.Outlined.ReceiptLong, contentDescription = null)
+                    }
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = draft.taxAmount,
+                    onValueChange = {
+                        draft = draft.copy(taxAmount = it)
+                        validationMessage = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Tax amount (INR)") },
+                    leadingIcon = { Icon(Icons.Outlined.Payments, contentDescription = null) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+            }
+            item {
                 AttachmentField(
                     attachmentName = draft.attachmentName,
+                    onOpen = draft.attachmentUri?.let { uri ->
+                        { openAttachment(context, uri) }
+                    },
                     onPick = { documentPicker.launch(arrayOf("application/pdf", "image/*")) },
                     onClear = {
+                        draft.attachmentUri
+                            ?.takeIf { it != initialDraft.attachmentUri }
+                            ?.let { releaseAttachmentPermission(context, it) }
                         draft = draft.copy(attachmentUri = null, attachmentName = null)
                     }
                 )
@@ -879,19 +1738,11 @@ private fun ExpenseEditorScreen(
                     onValueChange = { draft = draft.copy(notes = it) },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(128.dp),
+                        .height(128.dp)
+                        .testTag("notes_field"),
                     label = { Text("Notes") },
                     leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Notes, contentDescription = null) }
                 )
-            }
-            validationMessage?.let { message ->
-                item {
-                    Text(
-                        text = message,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
             }
             item {
                 Row(
@@ -899,7 +1750,7 @@ private fun ExpenseEditorScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onCancel,
+                        onClick = ::requestCancel,
                         modifier = Modifier.weight(1f)
                     ) {
                         Icon(Icons.Outlined.Close, contentDescription = null)
@@ -907,15 +1758,10 @@ private fun ExpenseEditorScreen(
                         Text("Cancel")
                     }
                     Button(
-                        onClick = {
-                            val error = validateExpenseDraft(draft)
-                            if (error == null) {
-                                onSave(draft.toExpense())
-                            } else {
-                                validationMessage = error
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
+                        onClick = ::validateAndSave,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("save_expense")
                     ) {
                         Icon(Icons.Outlined.Save, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
@@ -925,11 +1771,160 @@ private fun ExpenseEditorScreen(
             }
         }
     }
+
+    if (showDiscardConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDiscardConfirmation = false },
+            title = { Text("Discard changes?") },
+            text = { Text("Your unsaved expense details will be lost.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDiscardConfirmation = false
+                        releaseTransientAttachment()
+                        onCancel()
+                    }
+                ) {
+                    Text("Discard", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardConfirmation = false }) {
+                    Text("Keep editing")
+                }
+            }
+        )
+    }
+    validationMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { validationMessage = null },
+            title = { Text("Check expense details") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { validationMessage = null }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ExtractionReviewCard(result: InvoiceExtractionResult?) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Outlined.DocumentScanner,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "Review scanned details",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        text = "Nothing is saved until you confirm.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+            if (result == null) {
+                Text(
+                    text = "The extracted draft was restored. Check every field before saving.",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            } else if (result.fields.isEmpty()) {
+                Text(
+                    text = "No fields were confidently extracted. Complete the form below.",
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            } else {
+                result.fields.forEach { field ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = field.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Text(
+                                text = field.value,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        ConfidenceBadge(field.confidence)
+                    }
+                }
+            }
+            result?.warnings?.forEach { warning ->
+                Text(
+                    text = "• $warning",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            if (result?.qrCodeDetected == true) {
+                Text(
+                    text = "QR data detected and included in the checks.",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConfidenceBadge(confidence: ExtractionConfidence) {
+    val label = when (confidence) {
+        ExtractionConfidence.HIGH -> "High"
+        ExtractionConfidence.MEDIUM -> "Check"
+        ExtractionConfidence.LOW -> "Low"
+    }
+    val color = when (confidence) {
+        ExtractionConfidence.HIGH -> MaterialTheme.colorScheme.secondaryContainer
+        ExtractionConfidence.MEDIUM -> MaterialTheme.colorScheme.tertiaryContainer
+        ExtractionConfidence.LOW -> MaterialTheme.colorScheme.errorContainer
+    }
+    Surface(shape = CircleShape, color = color) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
 }
 
 @Composable
 private fun AttachmentField(
     attachmentName: String?,
+    onOpen: (() -> Unit)?,
     onPick: () -> Unit,
     onClear: () -> Unit
 ) {
@@ -942,7 +1937,9 @@ private fun AttachmentField(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
@@ -963,6 +1960,13 @@ private fun AttachmentField(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (onOpen != null) {
+                        Text(
+                            text = "Tap to view",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
             if (attachmentName != null) {
@@ -1056,6 +2060,31 @@ private data class ExpenseSummary(
     }
 }
 
+private enum class ExpenseSortOption(
+    val label: String,
+    val comparator: Comparator<Expense>
+) {
+    NEWEST(
+        "Newest",
+        compareByDescending<Expense> { parsedDate(it.date) ?: LocalDate.MIN }
+            .thenByDescending { it.updatedAt }
+    ),
+    OLDEST(
+        "Oldest",
+        compareBy<Expense> { parsedDate(it.date) ?: LocalDate.MAX }
+            .thenBy { it.updatedAt }
+    ),
+    AMOUNT_HIGH("Amount: high to low", compareByDescending { it.amount }),
+    AMOUNT_LOW("Amount: low to high", compareBy { it.amount })
+}
+
+private fun ExpenseStatus.nextAction(): Pair<String, ExpenseStatus>? = when (this) {
+    ExpenseStatus.DRAFT -> "Submit" to ExpenseStatus.FOR_REVIEW
+    ExpenseStatus.FOR_REVIEW -> "Approve" to ExpenseStatus.APPROVED
+    ExpenseStatus.APPROVED -> "Mark paid" to ExpenseStatus.PAID
+    ExpenseStatus.PAID, ExpenseStatus.REJECTED -> null
+}
+
 private fun sortedExpenses(expenses: List<Expense>): List<Expense> =
     expenses.sortedWith(
         compareByDescending<Expense> { parsedDate(it.date) ?: LocalDate.MIN }
@@ -1071,6 +2100,26 @@ private fun parsedYearMonth(date: String): YearMonth? =
 private fun formatExpenseDate(date: String): String {
     val formatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.getDefault())
     return parsedDate(date)?.format(formatter) ?: date
+}
+
+private fun recordCountLabel(count: Int): String =
+    "$count ${if (count == 1) "record" else "records"}"
+
+private fun showDatePicker(
+    context: Context,
+    currentValue: String,
+    onDateSelected: (String) -> Unit
+) {
+    val initialDate = parsedDate(currentValue) ?: LocalDate.now()
+    DatePickerDialog(
+        context,
+        { _, year, month, day ->
+            onDateSelected(LocalDate.of(year, month + 1, day).toString())
+        },
+        initialDate.year,
+        initialDate.monthValue - 1,
+        initialDate.dayOfMonth
+    ).show()
 }
 
 private fun displayNameForUri(context: Context, uri: Uri): String? =
@@ -1090,8 +2139,27 @@ private fun openAttachment(context: Context, attachmentUri: String?) {
     runCatching {
         context.startActivity(intent)
     }.onFailure {
-        Toast.makeText(context, "No app available to open this attachment.", Toast.LENGTH_SHORT)
+        Toast.makeText(
+            context,
+            "Couldn't open this attachment. Try attaching the file again.",
+            Toast.LENGTH_LONG
+        )
             .show()
+    }
+}
+
+private fun releaseAttachmentPermission(context: Context, attachmentUri: String?) {
+    if (attachmentUri == null) return
+    val uri = attachmentUri.toUri()
+    if (uri.authority == "${context.packageName}.fileprovider") {
+        InvoiceScanProcessor.deleteManagedScan(context, uri)
+        return
+    }
+    runCatching {
+        context.contentResolver.releasePersistableUriPermission(
+            uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
     }
 }
 

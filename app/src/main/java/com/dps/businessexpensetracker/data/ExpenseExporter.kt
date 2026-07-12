@@ -59,11 +59,13 @@ private fun List<Expense>.toCsv(): String {
                 "Date",
                 "Vendor",
                 "Invoice Number",
+                "Supplier GSTIN",
                 "Category",
                 "Payment Method",
                 "Status",
                 "Submitted By",
                 "Amount (INR)",
+                "Tax Amount (INR)",
                 "Notes",
                 "Attachment Name",
                 "Attachment URI"
@@ -75,11 +77,13 @@ private fun List<Expense>.toCsv(): String {
                     expense.date,
                     expense.vendor,
                     expense.invoiceNumber,
+                    expense.supplierGstin,
                     expense.category.label,
                     expense.paymentMethod.label,
                     expense.status.label,
                     expense.submittedBy,
                     "%.2f".format(Locale.US, expense.amount),
+                    expense.taxAmount?.let { "%.2f".format(Locale.US, it) }.orEmpty(),
                     expense.notes,
                     expense.attachmentName.orEmpty(),
                     expense.attachmentUri.orEmpty()
@@ -102,11 +106,13 @@ private fun List<Expense>.toHtmlReport(generatedAt: LocalDateTime): String {
           <td>${expense.date.escapeHtml()}</td>
           <td>${expense.vendor.escapeHtml()}</td>
           <td>${expense.invoiceNumber.escapeHtml()}</td>
+          <td>${expense.supplierGstin.escapeHtml()}</td>
           <td>${expense.category.label.escapeHtml()}</td>
           <td>${expense.paymentMethod.label.escapeHtml()}</td>
           <td>${expense.status.label.escapeHtml()}</td>
           <td>${expense.submittedBy.escapeHtml()}</td>
           <td class="amount">${currencyFormatter.format(expense.amount).escapeHtml()}</td>
+          <td class="amount">${expense.taxAmount?.let(currencyFormatter::format).orEmpty().escapeHtml()}</td>
           <td>${expense.notes.escapeHtml()}</td>
           <td>${expense.attachmentName.orEmpty().escapeHtml()}</td>
         </tr>
@@ -200,7 +206,7 @@ private fun List<Expense>.toHtmlReport(generatedAt: LocalDateTime): String {
         <body>
           <main>
             <h1>Business Expense Report</h1>
-            <p class="meta">Generated $generatedText · Currency: INR · ${size} records</p>
+            <p class="meta">Generated $generatedText · Currency: INR · ${recordCountLabel()}</p>
             <section class="summary" aria-label="Summary">
               <div class="metric"><span>Total spend</span><strong>${currencyFormatter.format(summary.totalSpend).escapeHtml()}</strong></div>
               <div class="metric"><span>This month</span><strong>${currencyFormatter.format(summary.thisMonthSpend).escapeHtml()}</strong></div>
@@ -215,11 +221,13 @@ private fun List<Expense>.toHtmlReport(generatedAt: LocalDateTime): String {
                     <th>Date</th>
                     <th>Vendor</th>
                     <th>Invoice</th>
+                    <th>Supplier GSTIN</th>
                     <th>Category</th>
                     <th>Payment</th>
                     <th>Status</th>
                     <th>Submitted By</th>
                     <th class="amount">Amount</th>
+                    <th class="amount">Tax</th>
                     <th>Notes</th>
                     <th>Attachment</th>
                   </tr>
@@ -269,13 +277,27 @@ private data class ExportSummary(
 }
 
 private fun String.toCsvCell(): String {
-    val escaped = replace("\"", "\"\"")
+    val firstMeaningfulCharacter = trimStart().firstOrNull()
+    val safeValue = if (
+        firstMeaningfulCharacter == '=' ||
+        firstMeaningfulCharacter == '+' ||
+        firstMeaningfulCharacter == '-' ||
+        firstMeaningfulCharacter == '@'
+    ) {
+        "'$this"
+    } else {
+        this
+    }
+    val escaped = safeValue.replace("\"", "\"\"")
     return if (any { it == ',' || it == '"' || it == '\n' || it == '\r' }) {
         "\"$escaped\""
     } else {
         escaped
     }
 }
+
+private fun List<Expense>.recordCountLabel(): String =
+    "$size ${if (size == 1) "record" else "records"}"
 
 private fun String.escapeHtml(): String = buildString {
     this@escapeHtml.forEach { character ->
