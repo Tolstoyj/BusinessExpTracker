@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
@@ -115,6 +116,11 @@ import com.dps.businessexpensetracker.data.ExpenseDraft
 import com.dps.businessexpensetracker.data.ExpenseRepository
 import com.dps.businessexpensetracker.data.ExpenseStatus
 import com.dps.businessexpensetracker.data.PaymentMethod
+import com.dps.businessexpensetracker.data.Sale
+import com.dps.businessexpensetracker.data.SaleDraft
+import com.dps.businessexpensetracker.data.SaleStatus
+import com.dps.businessexpensetracker.data.SalesChannel
+import com.dps.businessexpensetracker.data.SalesExporter
 import com.dps.businessexpensetracker.data.ExtractionConfidence
 import com.dps.businessexpensetracker.data.InvoiceExtractionResult
 import com.dps.businessexpensetracker.data.InvoiceScanProcessor
@@ -123,6 +129,8 @@ import com.dps.businessexpensetracker.data.isDuplicateInvoiceNumber
 import com.dps.businessexpensetracker.data.expenseDraftFromState
 import com.dps.businessexpensetracker.data.toStateString
 import com.dps.businessexpensetracker.data.validateExpenseDraft
+import com.dps.businessexpensetracker.data.saleDraftFromState
+import com.dps.businessexpensetracker.data.validateSaleDraft
 import com.dps.businessexpensetracker.ui.GuidedTourOverlay
 import com.dps.businessexpensetracker.ui.GuidedTourPrefs
 import com.dps.businessexpensetracker.ui.TourTargets
@@ -155,14 +163,24 @@ private val ExpenseDraftStateSaver = Saver<ExpenseDraft, String>(
     restore = { expenseDraftFromState(it) }
 )
 
+private val SaleDraftStateSaver = Saver<SaleDraft, String>(
+    save = { it.toStateString() },
+    restore = { saleDraftFromState(it) }
+)
+
 @Composable
 private fun BusinessExpenseTrackerApp() {
     val context = LocalContext.current
     val repository = remember { ExpenseRepository(context) }
     var expenses by remember { mutableStateOf(sortedExpenses(repository.loadExpenses())) }
+    var sales by remember { mutableStateOf(sortedSales(repository.loadSales())) }
     var editingExpenseId by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingDraftState by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var editingSaleId by rememberSaveable { mutableStateOf<String?>(null) }
+    var creatingSaleDraftState by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingSaleDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedLedgerName by rememberSaveable { mutableStateOf(LedgerView.EXPENSES.name) }
     var scanInProgress by remember { mutableStateOf(false) }
     var extractionReview by remember { mutableStateOf<InvoiceExtractionResult?>(null) }
     var automaticBackupUri by remember {
@@ -172,12 +190,29 @@ private fun BusinessExpenseTrackerApp() {
     val editingExpense = expenses.firstOrNull { it.id == editingExpenseId }
     val creatingDraft = creatingDraftState?.let(::expenseDraftFromState)
     val pendingDelete = expenses.firstOrNull { it.id == pendingDeleteId }
+    val editingSale = sales.firstOrNull { it.id == editingSaleId }
+    val creatingSaleDraft = creatingSaleDraftState?.let(::saleDraftFromState)
+    val pendingSaleDelete = sales.firstOrNull { it.id == pendingSaleDeleteId }
 
     fun persist(updated: List<Expense>) {
         val sorted = sortedExpenses(updated)
         repository.saveExpenses(sorted)
         expenses = sorted
-        ExpenseBackupManager.writeAutomaticBackup(context, sorted) {
+        ExpenseBackupManager.writeAutomaticBackup(context, sorted, sales) {
+            automaticBackupUri = null
+            Toast.makeText(
+                context,
+                "Automatic backup stopped because the backup file is no longer writable.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    fun persistSales(updated: List<Sale>) {
+        val sorted = sortedSales(updated)
+        repository.saveSales(sorted)
+        sales = sorted
+        ExpenseBackupManager.writeAutomaticBackup(context, expenses, sorted) {
             automaticBackupUri = null
             Toast.makeText(
                 context,
@@ -196,6 +231,7 @@ private fun BusinessExpenseTrackerApp() {
             context = context,
             targetUri = uri,
             expenses = expenses,
+            sales = sales,
             onSuccess = { result ->
                 val attachmentNote = if (result.missingAttachmentCount == 0) {
                     "${result.attachmentCount} attachments included"
@@ -204,7 +240,8 @@ private fun BusinessExpenseTrackerApp() {
                 }
                 Toast.makeText(
                     context,
-                    "Backup saved: ${result.expenseCount} expenses, $attachmentNote.",
+                    "Backup saved: ${result.expenseCount} expenses, ${result.salesCount} sales, " +
+                        "$attachmentNote.",
                     Toast.LENGTH_LONG
                 ).show()
             },
@@ -380,9 +417,30 @@ private fun BusinessExpenseTrackerApp() {
             )
         }
 
+        creatingSaleDraft != null || editingSale != null -> {
+            SaleEditorScreen(
+                initialDraft = editingSale?.let(SaleDraft::fromSale) ?: creatingSaleDraft!!,
+                existingReferences = sales
+                    .filterNot { it.id == editingSale?.id }
+                    .map { it.reference },
+                onCancel = {
+                    creatingSaleDraftState = null
+                    editingSaleId = null
+                },
+                onSave = { savedSale ->
+                    persistSales(sales.filterNot { it.id == savedSale.id } + savedSale)
+                    creatingSaleDraftState = null
+                    editingSaleId = null
+                }
+            )
+        }
+
         else -> {
             ExpenseHomeScreen(
                 expenses = expenses,
+                sales = sales,
+                selectedLedgerName = selectedLedgerName,
+                onLedgerSelected = { selectedLedgerName = it.name },
                 onAddExpense = {
                     extractionReview = null
                     creatingDraftState = ExpenseDraft().toStateString()
@@ -392,7 +450,7 @@ private fun BusinessExpenseTrackerApp() {
                 automaticBackupEnabled = automaticBackupUri != null,
                 onChooseBackupFile = {
                     val date = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE)
-                    backupFileLauncher.launch("business-expenses-$date.betbackup.zip")
+                    backupFileLauncher.launch("business-data-$date.betbackup.zip")
                 },
                 onBackupNow = {
                     automaticBackupUri?.let { writeBackup(it, enableAutomaticUpdates = true) }
@@ -432,7 +490,29 @@ private fun BusinessExpenseTrackerApp() {
                     )
                 },
                 onDeleteExpense = { pendingDeleteId = it.id },
-                onOpenAttachment = { openAttachment(context, it.attachmentUri) }
+                onOpenAttachment = { openAttachment(context, it.attachmentUri) },
+                onAddSale = { creatingSaleDraftState = SaleDraft().toStateString() },
+                onEditSale = { editingSaleId = it.id },
+                onDuplicateSale = { sale ->
+                    creatingSaleDraftState = SaleDraft.fromSale(sale).copy(
+                        id = null,
+                        date = LocalDate.now().toString(),
+                        status = SaleStatus.RECEIVED,
+                        reference = ""
+                    ).toStateString()
+                },
+                onSaleStatusChange = { sale, status ->
+                    persistSales(
+                        sales.map {
+                            if (it.id == sale.id) {
+                                it.copy(status = status, updatedAt = System.currentTimeMillis())
+                            } else {
+                                it
+                            }
+                        }
+                    )
+                },
+                onDeleteSale = { pendingSaleDeleteId = it.id }
             )
         }
     }
@@ -461,16 +541,36 @@ private fun BusinessExpenseTrackerApp() {
         )
     }
 
+    pendingSaleDelete?.let { sale ->
+        AlertDialog(
+            onDismissRequest = { pendingSaleDeleteId = null },
+            title = { Text("Delete sale") },
+            text = { Text("Delete ${sale.customer} from the sales register?") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        persistSales(sales.filterNot { it.id == sale.id })
+                        pendingSaleDeleteId = null
+                    }
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingSaleDeleteId = null }) { Text("Cancel") }
+            }
+        )
+    }
+
     pendingRestore?.let { restore ->
         AlertDialog(
             onDismissRequest = {
                 ExpenseBackupManager.discardRestore(restore)
                 pendingRestore = null
             },
-            title = { Text("Restore ${recordCountLabel(restore.expenses.size)}?") },
+            title = { Text("Restore business data?") },
             text = {
                 Text(
-                    "The backup contains ${restore.expenses.size} expenses and " +
+                    "The backup contains ${restore.expenses.size} expenses, " +
+                        "${restore.sales.size} sales and " +
                         "${restore.attachmentCount} attachments. Merge keeps current records; " +
                         "Replace removes current records first."
                 )
@@ -486,7 +586,19 @@ private fun BusinessExpenseTrackerApp() {
                         }
                         val merged = expenses.associateBy { it.id }.toMutableMap()
                         restore.expenses.forEach { merged[it.id] = it }
-                        persist(merged.values.toList())
+                        val mergedSales = sales.associateBy { it.id }.toMutableMap()
+                        restore.sales.forEach { mergedSales[it.id] = it }
+                        val restoredExpenses = sortedExpenses(merged.values.toList())
+                        val restoredSales = sortedSales(mergedSales.values.toList())
+                        repository.saveExpenses(restoredExpenses)
+                        repository.saveSales(restoredSales)
+                        expenses = restoredExpenses
+                        sales = restoredSales
+                        ExpenseBackupManager.writeAutomaticBackup(
+                            context,
+                            restoredExpenses,
+                            restoredSales
+                        )
                         pendingRestore = null
                         Toast.makeText(context, "Backup merged successfully.", Toast.LENGTH_LONG)
                             .show()
@@ -502,7 +614,17 @@ private fun BusinessExpenseTrackerApp() {
                             expenses.forEach {
                                 releaseAttachmentPermission(context, it.attachmentUri)
                             }
-                            persist(restore.expenses)
+                            val restoredExpenses = sortedExpenses(restore.expenses)
+                            val restoredSales = sortedSales(restore.sales)
+                            repository.saveExpenses(restoredExpenses)
+                            repository.saveSales(restoredSales)
+                            expenses = restoredExpenses
+                            sales = restoredSales
+                            ExpenseBackupManager.writeAutomaticBackup(
+                                context,
+                                restoredExpenses,
+                                restoredSales
+                            )
                             pendingRestore = null
                             Toast.makeText(
                                 context,
@@ -531,6 +653,9 @@ private fun BusinessExpenseTrackerApp() {
 @Composable
 private fun ExpenseHomeScreen(
     expenses: List<Expense>,
+    sales: List<Sale>,
+    selectedLedgerName: String,
+    onLedgerSelected: (LedgerView) -> Unit,
     onAddExpense: () -> Unit,
     onScanInvoice: () -> Unit,
     onImportInvoice: () -> Unit,
@@ -543,13 +668,22 @@ private fun ExpenseHomeScreen(
     onDuplicateExpense: (Expense) -> Unit,
     onStatusChange: (Expense, ExpenseStatus) -> Unit,
     onDeleteExpense: (Expense) -> Unit,
-    onOpenAttachment: (Expense) -> Unit
+    onOpenAttachment: (Expense) -> Unit,
+    onAddSale: () -> Unit,
+    onEditSale: (Sale) -> Unit,
+    onDuplicateSale: (Sale) -> Unit,
+    onSaleStatusChange: (Sale, SaleStatus) -> Unit,
+    onDeleteSale: (Sale) -> Unit
 ) {
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
     var statusFilterName by rememberSaveable { mutableStateOf("") }
     var categoryFilterName by rememberSaveable { mutableStateOf("") }
     var sortOptionName by rememberSaveable { mutableStateOf(ExpenseSortOption.NEWEST.name) }
+    var saleQuery by rememberSaveable { mutableStateOf("") }
+    var saleStatusFilterName by rememberSaveable { mutableStateOf("") }
+    var saleChannelFilterName by rememberSaveable { mutableStateOf("") }
+    var saleSortOptionName by rememberSaveable { mutableStateOf(SaleSortOption.NEWEST.name) }
     var exportMenuExpanded by remember { mutableStateOf(false) }
     var dataMenuExpanded by remember { mutableStateOf(false) }
     var addSheetVisible by remember { mutableStateOf(false) }
@@ -566,6 +700,8 @@ private fun ExpenseHomeScreen(
         GuidedTourPrefs.markTourSeen(context)
     }
     val currencyFormatter = remember { inrCurrencyFormatter() }
+    val selectedLedger = LedgerView.entries.firstOrNull { it.name == selectedLedgerName }
+        ?: LedgerView.EXPENSES
     val selectedStatus = ExpenseStatus.entries.firstOrNull { it.name == statusFilterName }
     val selectedCategory = ExpenseCategory.entries.firstOrNull { it.name == categoryFilterName }
     val selectedSort = ExpenseSortOption.entries
@@ -595,13 +731,47 @@ private fun ExpenseHomeScreen(
             matchesSearch && matchesStatus && matchesCategory
         }.sortedWith(selectedSort.comparator)
     }
+    val selectedSaleStatus = SaleStatus.entries.firstOrNull { it.name == saleStatusFilterName }
+    val selectedSaleChannel = SalesChannel.entries.firstOrNull { it.name == saleChannelFilterName }
+    val selectedSaleSort = SaleSortOption.entries.firstOrNull { it.name == saleSortOptionName }
+        ?: SaleSortOption.NEWEST
+    val hasActiveSaleFilters = saleQuery.isNotBlank() || selectedSaleStatus != null ||
+        selectedSaleChannel != null
+    val filteredSales = remember(
+        sales,
+        saleQuery,
+        saleStatusFilterName,
+        saleChannelFilterName,
+        saleSortOptionName
+    ) {
+        sales.filter { sale ->
+            val searchText = listOf(
+                sale.customer,
+                sale.reference,
+                sale.soldBy,
+                sale.notes,
+                sale.channel.label,
+                sale.paymentMethod.label,
+                sale.status.label
+            ).joinToString(" ").lowercase(Locale.ROOT)
+            val matchesSearch = saleQuery.isBlank() ||
+                searchText.contains(saleQuery.trim().lowercase(Locale.ROOT))
+            val matchesStatus = selectedSaleStatus == null || sale.status == selectedSaleStatus
+            val matchesChannel = selectedSaleChannel == null || sale.channel == selectedSaleChannel
+            matchesSearch && matchesStatus && matchesChannel
+        }.sortedWith(selectedSaleSort.comparator)
+    }
     val csvExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument(ExpenseExportFormat.CSV.mimeType),
         onResult = { uri ->
             saveExportToUri(
                 context,
                 uri,
-                ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.CSV)
+                if (selectedLedger == LedgerView.EXPENSES) {
+                    ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.CSV)
+                } else {
+                    SalesExporter.create(filteredSales, ExpenseExportFormat.CSV)
+                }
             )
         }
     )
@@ -611,7 +781,11 @@ private fun ExpenseHomeScreen(
             saveExportToUri(
                 context,
                 uri,
-                ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.HTML)
+                if (selectedLedger == LedgerView.EXPENSES) {
+                    ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.HTML)
+                } else {
+                    SalesExporter.create(filteredSales, ExpenseExportFormat.HTML)
+                }
             )
         }
     )
@@ -622,7 +796,7 @@ private fun ExpenseHomeScreen(
                 CenterAlignedTopAppBar(
                     title = {
                         Text(
-                            text = "Expense Tracker",
+                            text = "Business Tracker",
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -631,7 +805,11 @@ private fun ExpenseHomeScreen(
                         Box(modifier = Modifier.tourTarget(tourTargetBounds, TourTargets.EXPORT)) {
                             IconButton(
                                 onClick = { exportMenuExpanded = true },
-                                enabled = filteredExpenses.isNotEmpty()
+                                enabled = if (selectedLedger == LedgerView.EXPENSES) {
+                                    filteredExpenses.isNotEmpty()
+                                } else {
+                                    filteredSales.isNotEmpty()
+                                }
                             ) {
                                 Icon(
                                     imageVector = Icons.Outlined.FileDownload,
@@ -646,10 +824,11 @@ private fun ExpenseHomeScreen(
                                     text = { Text("Export current view as CSV") },
                                     onClick = {
                                         exportMenuExpanded = false
-                                        val export = ExpenseExporter.create(
-                                            expenses = filteredExpenses,
-                                            format = ExpenseExportFormat.CSV
-                                        )
+                                        val export = if (selectedLedger == LedgerView.EXPENSES) {
+                                            ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.CSV)
+                                        } else {
+                                            SalesExporter.create(filteredSales, ExpenseExportFormat.CSV)
+                                        }
                                         csvExportLauncher.launch(export.fileName)
                                     }
                                 )
@@ -657,10 +836,11 @@ private fun ExpenseHomeScreen(
                                     text = { Text("Export current view as HTML") },
                                     onClick = {
                                         exportMenuExpanded = false
-                                        val export = ExpenseExporter.create(
-                                            expenses = filteredExpenses,
-                                            format = ExpenseExportFormat.HTML
-                                        )
+                                        val export = if (selectedLedger == LedgerView.EXPENSES) {
+                                            ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.HTML)
+                                        } else {
+                                            SalesExporter.create(filteredSales, ExpenseExportFormat.HTML)
+                                        }
                                         htmlExportLauncher.launch(export.fileName)
                                     }
                                 )
@@ -737,10 +917,20 @@ private fun ExpenseHomeScreen(
             },
             floatingActionButton = {
                 FloatingActionButton(
-                    onClick = { addSheetVisible = true },
+                    onClick = {
+                        if (selectedLedger == LedgerView.EXPENSES) addSheetVisible = true
+                        else onAddSale()
+                    },
                     modifier = Modifier.tourTarget(tourTargetBounds, TourTargets.ADD_EXPENSE)
                 ) {
-                    Icon(Icons.Outlined.Add, contentDescription = "Add expense")
+                    Icon(
+                        Icons.Outlined.Add,
+                        contentDescription = if (selectedLedger == LedgerView.EXPENSES) {
+                            "Add expense"
+                        } else {
+                            "Add sale"
+                        }
+                    )
                 }
             }
         ) { innerPadding ->
@@ -757,11 +947,22 @@ private fun ExpenseHomeScreen(
                     ) {
                         DashboardSummary(
                             expenses = expenses,
+                            sales = sales,
                             currencyFormatter = currencyFormatter
                         )
                     }
                 }
 
+                item {
+                    LedgerSelector(
+                        selected = selectedLedger,
+                        onSelected = onLedgerSelected,
+                        expenseCount = expenses.size,
+                        saleCount = sales.size
+                    )
+                }
+
+                if (selectedLedger == LedgerView.EXPENSES) {
                 item {
                     Box(
                         modifier = Modifier.tourTarget(
@@ -830,6 +1031,63 @@ private fun ExpenseHomeScreen(
                             onDelete = { onDeleteExpense(expense) },
                             onOpenAttachment = { onOpenAttachment(expense) }
                         )
+                    }
+                }
+                } else {
+                    item {
+                        SalesSearchAndFilters(
+                            query = saleQuery,
+                            onQueryChange = { saleQuery = it },
+                            statusFilterName = saleStatusFilterName,
+                            onStatusFilterChange = { saleStatusFilterName = it },
+                            channelFilterName = saleChannelFilterName,
+                            onChannelFilterChange = { saleChannelFilterName = it },
+                            sortOptionName = saleSortOptionName,
+                            onSortOptionChange = { saleSortOptionName = it },
+                            hasActiveFilters = hasActiveSaleFilters,
+                            onClearFilters = {
+                                saleQuery = ""
+                                saleStatusFilterName = ""
+                                saleChannelFilterName = ""
+                            }
+                        )
+                    }
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Daily sales", style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold)
+                            Text(recordCountLabel(filteredSales.size),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    if (filteredSales.isEmpty()) {
+                        item {
+                            EmptySalesState(
+                                hasSales = sales.isNotEmpty(),
+                                onAddSale = onAddSale,
+                                onClearFilters = {
+                                    saleQuery = ""
+                                    saleStatusFilterName = ""
+                                    saleChannelFilterName = ""
+                                }
+                            )
+                        }
+                    } else {
+                        items(filteredSales, key = { "sale-${it.id}" }) { sale ->
+                            SaleListItem(
+                                sale = sale,
+                                currencyFormatter = currencyFormatter,
+                                onEdit = { onEditSale(sale) },
+                                onDuplicate = { onDuplicateSale(sale) },
+                                onStatusChange = { onSaleStatusChange(sale, it) },
+                                onDelete = { onDeleteSale(sale) }
+                            )
+                        }
                     }
                 }
             }
@@ -1011,9 +1269,10 @@ private fun AddExpenseOptions(
 @Composable
 private fun DashboardSummary(
     expenses: List<Expense>,
+    sales: List<Sale>,
     currencyFormatter: NumberFormat
 ) {
-    val summary = remember(expenses) { ExpenseSummary.from(expenses) }
+    val summary = remember(expenses, sales) { BusinessSummary.from(expenses, sales) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         ElevatedCard(
@@ -1029,12 +1288,12 @@ private fun DashboardSummary(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Total spend",
+                    text = "Operating cashflow",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
-                    text = currencyFormatter.format(summary.totalSpend),
+                    text = currencyFormatter.format(summary.operatingCashflow),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -1049,11 +1308,11 @@ private fun DashboardSummary(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "This month",
+                        text = "This month cashflow",
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        text = currencyFormatter.format(summary.thisMonthSpend),
+                        text = currencyFormatter.format(summary.thisMonthCashflow),
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -1066,9 +1325,10 @@ private fun DashboardSummary(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            SummaryPill("Pending", summary.pendingCount.toString())
-            SummaryPill("Paid", currencyFormatter.format(summary.paidSpend))
-            SummaryPill("Top category", summary.topCategory)
+            SummaryPill("Today sales", currencyFormatter.format(summary.todaySales))
+            SummaryPill("Received", currencyFormatter.format(summary.receivedSales))
+            SummaryPill("Paid expenses", currencyFormatter.format(summary.paidSpend))
+            SummaryPill("Pending sales", currencyFormatter.format(summary.pendingSales))
         }
     }
 }
@@ -1217,6 +1477,153 @@ private fun FilterMenuButton(
                         expanded = false
                     }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LedgerSelector(
+    selected: LedgerView,
+    onSelected: (LedgerView) -> Unit,
+    expenseCount: Int,
+    saleCount: Int
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        listOf(
+            Triple(LedgerView.EXPENSES, "Expenses", expenseCount),
+            Triple(LedgerView.SALES, "Sales", saleCount)
+        ).forEach { (view, label, count) ->
+            val isSelected = selected == view
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelected(view) }
+                    .testTag("ledger_${view.name.lowercase()}"),
+                shape = CircleShape,
+                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerHigh,
+                contentColor = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        if (view == LedgerView.EXPENSES) {
+                            Icons.AutoMirrored.Outlined.ReceiptLong
+                        } else {
+                            Icons.Outlined.ShoppingCart
+                        },
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(7.dp))
+                    Text("$label  $count", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SalesSearchAndFilters(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    statusFilterName: String,
+    onStatusFilterChange: (String) -> Unit,
+    channelFilterName: String,
+    onChannelFilterChange: (String) -> Unit,
+    sortOptionName: String,
+    onSortOptionChange: (String) -> Unit,
+    hasActiveFilters: Boolean,
+    onClearFilters: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.fillMaxWidth().testTag("sale_search"),
+            singleLine = true,
+            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Clear sales search")
+                    }
+                }
+            },
+            label = { Text("Search customer, reference") }
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Outlined.FilterList, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            FilterMenuButton(
+                label = "Sale status",
+                selectedText = SaleStatus.entries.firstOrNull { it.name == statusFilterName }
+                    ?.label ?: "All",
+                options = listOf("" to "All") + SaleStatus.entries.map { it.name to it.label },
+                onSelected = onStatusFilterChange
+            )
+            FilterMenuButton(
+                label = "Channel",
+                selectedText = SalesChannel.entries.firstOrNull { it.name == channelFilterName }
+                    ?.label ?: "All",
+                options = listOf("" to "All") + SalesChannel.entries.map { it.name to it.label },
+                onSelected = onChannelFilterChange
+            )
+            FilterMenuButton(
+                label = "Sale sort",
+                selectedText = SaleSortOption.entries.firstOrNull { it.name == sortOptionName }
+                    ?.label ?: SaleSortOption.NEWEST.label,
+                options = SaleSortOption.entries.map { it.name to it.label },
+                onSelected = onSortOptionChange,
+                showSortIcon = true
+            )
+            if (hasActiveFilters) TextButton(onClick = onClearFilters) { Text("Clear") }
+        }
+    }
+}
+
+@Composable
+private fun EmptySalesState(
+    hasSales: Boolean,
+    onAddSale: () -> Unit,
+    onClearFilters: () -> Unit
+) {
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(Icons.Outlined.ShoppingCart, contentDescription = null,
+                modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
+            Text(
+                if (hasSales) "No matching sales" else "No sales yet",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                if (hasSales) "Try another search or clear the sales filters."
+                else "Record today's first sale to start tracking revenue and cashflow.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (hasSales) OutlinedButton(onClick = onClearFilters) { Text("Clear filters") }
+            else Button(onClick = onAddSale) {
+                Icon(Icons.Outlined.Add, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Add sale")
             }
         }
     }
@@ -1428,6 +1835,132 @@ private fun ExpenseListItem(
 }
 
 @Composable
+private fun SaleListItem(
+    sale: Sale,
+    currencyFormatter: NumberFormat,
+    onEdit: () -> Unit,
+    onDuplicate: () -> Unit,
+    onStatusChange: (SaleStatus) -> Unit,
+    onDelete: () -> Unit
+) {
+    var actionsExpanded by remember { mutableStateOf(false) }
+    ElevatedCard(modifier = Modifier.fillMaxWidth().clickable(onClick = onEdit)) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(sale.customer, style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${sale.channel.label} • ${formatExpenseDate(sale.date)} • Qty ${sale.quantity}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(currencyFormatter.format(sale.amount),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    SaleStatusBadge(sale.status)
+                }
+            }
+            Text(
+                buildList {
+                    if (sale.reference.isNotBlank()) add("Ref ${sale.reference}")
+                    add(sale.paymentMethod.label)
+                    if (sale.soldBy.isNotBlank()) add("By ${sale.soldBy}")
+                }.joinToString(" • "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (sale.status == SaleStatus.PENDING) {
+                    TextButton(onClick = { onStatusChange(SaleStatus.RECEIVED) }) {
+                        Icon(Icons.Outlined.CheckCircle, contentDescription = null,
+                            modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Mark received")
+                    }
+                }
+                Box {
+                    IconButton(onClick = { actionsExpanded = true }) {
+                        Icon(Icons.Outlined.MoreVert, contentDescription = "Sale actions")
+                    }
+                    DropdownMenu(
+                        expanded = actionsExpanded,
+                        onDismissRequest = { actionsExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Edit") },
+                            leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                            onClick = { actionsExpanded = false; onEdit() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Duplicate") },
+                            leadingIcon = {
+                                Icon(Icons.Outlined.ContentCopy, contentDescription = null)
+                            },
+                            onClick = { actionsExpanded = false; onDuplicate() }
+                        )
+                        if (sale.status != SaleStatus.REFUNDED) {
+                            DropdownMenuItem(
+                                text = { Text("Mark refunded") },
+                                onClick = {
+                                    actionsExpanded = false
+                                    onStatusChange(SaleStatus.REFUNDED)
+                                }
+                            )
+                        }
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Delete") },
+                            leadingIcon = {
+                                Icon(Icons.Outlined.Delete, contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error)
+                            },
+                            onClick = { actionsExpanded = false; onDelete() }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SaleStatusBadge(status: SaleStatus) {
+    val colors = when (status) {
+        SaleStatus.RECEIVED -> MaterialTheme.colorScheme.secondaryContainer to
+            MaterialTheme.colorScheme.onSecondaryContainer
+        SaleStatus.PENDING -> MaterialTheme.colorScheme.tertiaryContainer to
+            MaterialTheme.colorScheme.onTertiaryContainer
+        SaleStatus.REFUNDED -> MaterialTheme.colorScheme.errorContainer to
+            MaterialTheme.colorScheme.onErrorContainer
+    }
+    Surface(shape = CircleShape, color = colors.first, contentColor = colors.second) {
+        Text(status.label, modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
 private fun StatusBadge(status: ExpenseStatus) {
     val (containerColor, contentColor) = when (status) {
         ExpenseStatus.DRAFT -> MaterialTheme.colorScheme.surfaceVariant to
@@ -1453,6 +1986,243 @@ private fun StatusBadge(status: ExpenseStatus) {
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SaleEditorScreen(
+    initialDraft: SaleDraft,
+    existingReferences: List<String>,
+    onCancel: () -> Unit,
+    onSave: (Sale) -> Unit
+) {
+    val context = LocalContext.current
+    var draft by rememberSaveable(initialDraft.id, stateSaver = SaleDraftStateSaver) {
+        mutableStateOf(initialDraft)
+    }
+    var validationMessage by remember { mutableStateOf<String?>(null) }
+    var showDiscardConfirmation by remember { mutableStateOf(false) }
+    val duplicateReference = isDuplicateInvoiceNumber(draft.reference, existingReferences)
+
+    fun requestCancel() {
+        if (draft != initialDraft) showDiscardConfirmation = true else onCancel()
+    }
+
+    fun validateAndSave() {
+        val error = if (duplicateReference) {
+            "This sale reference is already used by another sale."
+        } else {
+            validateSaleDraft(draft)
+        }
+        if (error == null) onSave(draft.toSale()) else validationMessage = error
+    }
+
+    BackHandler(onBack = ::requestCancel)
+    Scaffold(
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = { Text(if (initialDraft.id == null) "Add sale" else "Edit sale") },
+                navigationIcon = {
+                    IconButton(onClick = ::requestCancel) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = ::validateAndSave) {
+                        Icon(Icons.Outlined.Save, contentDescription = "Save sale")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                ElevatedCard(
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        Text("Record daily revenue", fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(
+                            "Use the final invoiced total. Tax and discount are optional details.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = draft.customer,
+                    onValueChange = { draft = draft.copy(customer = it); validationMessage = null },
+                    modifier = Modifier.fillMaxWidth().testTag("sale_customer_field"),
+                    singleLine = true,
+                    label = { Text("Customer or sale label") },
+                    leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null) }
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = draft.amount,
+                    onValueChange = { draft = draft.copy(amount = it); validationMessage = null },
+                    modifier = Modifier.fillMaxWidth().testTag("sale_amount_field"),
+                    singleLine = true,
+                    label = { Text("Total sale (INR)") },
+                    leadingIcon = { Icon(Icons.Outlined.Payments, contentDescription = null) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                )
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    EnumDropdownField(
+                        label = "Channel",
+                        selected = draft.channel,
+                        options = SalesChannel.entries,
+                        optionLabel = { it.label },
+                        onSelected = { draft = draft.copy(channel = it) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    EnumDropdownField(
+                        label = "Status",
+                        selected = draft.status,
+                        options = SaleStatus.entries,
+                        optionLabel = { it.label },
+                        onSelected = { draft = draft.copy(status = it) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            showDatePicker(context, draft.date) { draft = draft.copy(date = it) }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Date", style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(draft.date, maxLines = 1)
+                        }
+                        Icon(Icons.Outlined.CalendarToday, contentDescription = "Choose sale date")
+                    }
+                    EnumDropdownField(
+                        label = "Payment",
+                        selected = draft.paymentMethod,
+                        options = PaymentMethod.entries,
+                        optionLabel = { it.label },
+                        onSelected = { draft = draft.copy(paymentMethod = it) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = draft.quantity,
+                        onValueChange = { draft = draft.copy(quantity = it); validationMessage = null },
+                        modifier = Modifier.weight(1f).testTag("sale_quantity_field"),
+                        singleLine = true,
+                        label = { Text("Quantity") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                    )
+                    OutlinedTextField(
+                        value = draft.soldBy,
+                        onValueChange = { draft = draft.copy(soldBy = it); validationMessage = null },
+                        modifier = Modifier.weight(1f).testTag("sale_sold_by_field"),
+                        singleLine = true,
+                        label = { Text("Sold by") }
+                    )
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = draft.reference,
+                    onValueChange = { draft = draft.copy(reference = it); validationMessage = null },
+                    modifier = Modifier.fillMaxWidth().testTag("sale_reference_field"),
+                    singleLine = true,
+                    isError = duplicateReference,
+                    supportingText = {
+                        if (duplicateReference) Text("Already used by another sale")
+                    },
+                    label = { Text("Invoice / order reference (optional)") }
+                )
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    OutlinedTextField(
+                        value = draft.taxAmount,
+                        onValueChange = { draft = draft.copy(taxAmount = it); validationMessage = null },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("Tax (INR)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    )
+                    OutlinedTextField(
+                        value = draft.discountAmount,
+                        onValueChange = {
+                            draft = draft.copy(discountAmount = it)
+                            validationMessage = null
+                        },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("Discount (INR)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    )
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = draft.notes,
+                    onValueChange = { draft = draft.copy(notes = it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    label = { Text("Notes (optional)") },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Notes, contentDescription = null) }
+                )
+            }
+            validationMessage?.let { message ->
+                item {
+                    Surface(
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        shape = MaterialTheme.shapes.medium
+                    ) {
+                        Text(message, modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            }
+            item {
+                Button(onClick = ::validateAndSave, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (initialDraft.id == null) "Add sale" else "Save changes")
+                }
+            }
+        }
+    }
+
+    if (showDiscardConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showDiscardConfirmation = false },
+            title = { Text("Discard changes?") },
+            text = { Text("Your unsaved sale changes will be lost.") },
+            confirmButton = {
+                TextButton(onClick = onCancel) { Text("Discard") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardConfirmation = false }) { Text("Keep editing") }
+            }
         )
     }
 }
@@ -2027,37 +2797,59 @@ private fun <T : Enum<T>> EnumDropdownField(
     }
 }
 
-private data class ExpenseSummary(
-    val totalSpend: Double,
-    val thisMonthSpend: Double,
+private data class BusinessSummary(
+    val operatingCashflow: Double,
+    val thisMonthCashflow: Double,
+    val todaySales: Double,
+    val receivedSales: Double,
+    val pendingSales: Double,
     val paidSpend: Double,
-    val pendingCount: Int,
-    val topCategory: String
 ) {
     companion object {
-        fun from(expenses: List<Expense>): ExpenseSummary {
+        fun from(expenses: List<Expense>, sales: List<Sale>): BusinessSummary {
             val currentMonth = YearMonth.now()
-            val topCategory = expenses
-                .groupBy { it.category }
-                .maxByOrNull { (_, categoryExpenses) -> categoryExpenses.sumOf { it.amount } }
-                ?.key
-                ?.label ?: "None"
-
-            return ExpenseSummary(
-                totalSpend = expenses.sumOf { it.amount },
-                thisMonthSpend = expenses
+            val paidExpenses = expenses.filter { it.status == ExpenseStatus.PAID }
+            val receivedSales = sales.filter { it.status == SaleStatus.RECEIVED }
+            val paidSpend = paidExpenses.sumOf { it.amount }
+            val receivedTotal = receivedSales.sumOf { it.amount }
+            val monthSpend = paidExpenses
                     .filter { parsedYearMonth(it.date) == currentMonth }
+                    .sumOf { it.amount }
+            val monthSales = receivedSales
+                .filter { parsedYearMonth(it.date) == currentMonth }
+                .sumOf { it.amount }
+            return BusinessSummary(
+                operatingCashflow = receivedTotal - paidSpend,
+                thisMonthCashflow = monthSales - monthSpend,
+                todaySales = receivedSales.filter { it.date == LocalDate.now().toString() }
                     .sumOf { it.amount },
-                paidSpend = expenses
-                    .filter { it.status == ExpenseStatus.PAID }
+                receivedSales = receivedTotal,
+                pendingSales = sales.filter { it.status == SaleStatus.PENDING }
                     .sumOf { it.amount },
-                pendingCount = expenses.count {
-                    it.status == ExpenseStatus.DRAFT || it.status == ExpenseStatus.FOR_REVIEW
-                },
-                topCategory = topCategory
+                paidSpend = paidSpend
             )
         }
     }
+}
+
+private enum class LedgerView { EXPENSES, SALES }
+
+private enum class SaleSortOption(
+    val label: String,
+    val comparator: Comparator<Sale>
+) {
+    NEWEST(
+        "Newest",
+        compareByDescending<Sale> { parsedDate(it.date) ?: LocalDate.MIN }
+            .thenByDescending { it.updatedAt }
+    ),
+    OLDEST(
+        "Oldest",
+        compareBy<Sale> { parsedDate(it.date) ?: LocalDate.MAX }
+            .thenBy { it.updatedAt }
+    ),
+    AMOUNT_HIGH("Amount: high to low", compareByDescending { it.amount }),
+    AMOUNT_LOW("Amount: low to high", compareBy { it.amount })
 }
 
 private enum class ExpenseSortOption(
@@ -2090,6 +2882,9 @@ private fun sortedExpenses(expenses: List<Expense>): List<Expense> =
         compareByDescending<Expense> { parsedDate(it.date) ?: LocalDate.MIN }
             .thenByDescending { it.updatedAt }
     )
+
+private fun sortedSales(sales: List<Sale>): List<Sale> =
+    sales.sortedWith(SaleSortOption.NEWEST.comparator)
 
 private fun parsedDate(date: String): LocalDate? =
     runCatching { LocalDate.parse(date) }.getOrNull()

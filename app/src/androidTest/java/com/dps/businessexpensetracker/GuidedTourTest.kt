@@ -38,7 +38,7 @@ class GuidedTourTest {
     @Test
     fun tourShowsOnFirstLaunchAndCompletesThroughAllSteps() {
         composeRule.onNodeWithTag("tour_overlay").assertIsDisplayed()
-        composeRule.onNodeWithText("Welcome to Expense Tracker").assertIsDisplayed()
+        composeRule.onNodeWithText("Welcome to Business Tracker").assertIsDisplayed()
 
         repeat(6) {
             composeRule.onNodeWithTag("tour_next").performClick()
@@ -70,7 +70,7 @@ class GuidedTourTest {
         composeRule.onNodeWithText("Replay app tour").performClick()
 
         composeRule.onNodeWithTag("tour_overlay").assertIsDisplayed()
-        composeRule.onNodeWithText("Welcome to Expense Tracker").assertIsDisplayed()
+        composeRule.onNodeWithText("Welcome to Business Tracker").assertIsDisplayed()
     }
 
     @Test
@@ -81,6 +81,6 @@ class GuidedTourTest {
         composeRule.onNodeWithTag("tour_next").performClick()
         composeRule.onNodeWithTag("tour_back").assertIsDisplayed()
         composeRule.onNodeWithTag("tour_back").performClick()
-        composeRule.onNodeWithText("Welcome to Expense Tracker").assertIsDisplayed()
+        composeRule.onNodeWithText("Welcome to Business Tracker").assertIsDisplayed()
     }
 }

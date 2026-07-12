@@ -34,6 +34,26 @@ class ExpenseRepository(context: Context) {
         }
     }
 
+    fun loadSales(): List<Sale> {
+        val primary = preferences.getString(KEY_SALES, null)
+        val backup = preferences.getString(KEY_SALES_BACKUP, null)
+        return parseSales(primary) ?: parseSales(backup) ?: emptyList()
+    }
+
+    fun saveSales(sales: List<Sale>) {
+        val array = JSONArray()
+        sales.forEach { array.put(it.toJson()) }
+        val newValue = array.toString()
+        val currentValue = preferences.getString(KEY_SALES, null)
+        preferences.edit {
+            when {
+                parseSales(currentValue) != null -> putString(KEY_SALES_BACKUP, currentValue)
+                !preferences.contains(KEY_SALES_BACKUP) -> putString(KEY_SALES_BACKUP, newValue)
+            }
+            putString(KEY_SALES, newValue)
+        }
+    }
+
     private fun parseExpenses(raw: String?): List<Expense>? {
         if (raw == null) return null
         return runCatching {
@@ -46,8 +66,22 @@ class ExpenseRepository(context: Context) {
         }.getOrNull()
     }
 
+    private fun parseSales(raw: String?): List<Sale>? {
+        if (raw == null) return null
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (index in 0 until array.length()) {
+                    add(Sale.fromJson(array.getJSONObject(index)))
+                }
+            }
+        }.getOrNull()
+    }
+
     private companion object {
         const val KEY_EXPENSES = "expenses_json"
         const val KEY_EXPENSES_BACKUP = "expenses_json_backup"
+        const val KEY_SALES = "sales_json"
+        const val KEY_SALES_BACKUP = "sales_json_backup"
     }
 }
