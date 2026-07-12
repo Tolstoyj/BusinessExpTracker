@@ -44,6 +44,7 @@ class ExpenseExporterTest {
         assertEquals("business-expenses-20260708-1030.html", export.fileName)
         assertEquals("text/html", export.mimeType)
         assertTrue(export.content.contains("Currency: INR"))
+        assertTrue(export.content.contains("1 record</p>"))
         assertTrue(export.content.contains("&lt;script&gt;Vendor&lt;/script&gt;"))
         assertTrue(export.content.contains("Tax &amp; freight"))
     }
@@ -51,6 +52,24 @@ class ExpenseExporterTest {
     @Test
     fun inrFormatterUsesIndianCurrency() {
         assertEquals(Currency.getInstance("INR"), inrCurrencyFormatter().currency)
+    }
+
+    @Test
+    fun csvExportNeutralizesSpreadsheetFormulas() {
+        val export = ExpenseExporter.create(
+            expenses = listOf(
+                sampleExpense(
+                    vendor = "=HYPERLINK(\"https://example.invalid\")",
+                    notes = "  @external-reference"
+                )
+            ),
+            format = ExpenseExportFormat.CSV,
+            generatedAt = LocalDateTime.of(2026, 7, 8, 10, 30)
+        )
+
+        assertTrue(export.content.contains("' =HYPERLINK").not())
+        assertTrue(export.content.contains("'=HYPERLINK"))
+        assertTrue(export.content.contains("'  @external-reference"))
     }
 
     private fun sampleExpense(

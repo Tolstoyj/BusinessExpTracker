@@ -2,10 +2,10 @@ package com.dps.businessexpensetracker.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val LedgerGreen80 = Color(0xFFA7F3D0)
-val SteelBlue80 = Color(0xFFBFDBFE)
-val Amber80 = Color(0xFFFDE68A)
+val LedgerGreen80 = Color(0xFF83D5C6)
+val SteelBlue80 = Color(0xFFA4CDDA)
+val Amber80 = Color(0xFFFFB95F)
 
-val LedgerGreen40 = Color(0xFF0F766E)
-val SteelBlue40 = Color(0xFF2563EB)
-val Amber40 = Color(0xFFB45309)
+val LedgerGreen40 = Color(0xFF006B5F)
+val SteelBlue40 = Color(0xFF3B6470)
+val Amber40 = Color(0xFF8C4F00)

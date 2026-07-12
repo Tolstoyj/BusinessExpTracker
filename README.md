@@ -1,24 +1,45 @@
 # Business Expense Tracker
 
-Business Expense Tracker is a native Android application for recording, reviewing, and exporting business expenses. It is designed for a CFO, accountant, or finance operator who receives bills, invoices, receipts, and payment details, then needs a simple register for later review and reporting.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Android 10+](https://img.shields.io/badge/Android-10%2B-3DDC84.svg?logo=android&logoColor=white)](https://developer.android.com/about/versions/10)
+
+**[Download the latest Android APK](https://github.com/Tolstoyj/BusinessExpTracker/releases/latest)**
+
+Business Expense Tracker is a free, open-source, local-first Android application for recording, reviewing, backing up, and exporting business expenses. It is designed for a CFO, accountant, or finance operator who receives bills, invoices, receipts, and payment details, then needs a simple register for later review and reporting.
 
 ## Screenshots
 
-| Dashboard | Add Expense | Export Menu |
-| --- | --- | --- |
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Add expense](docs/screenshots/add-expense.png) | ![Export menu](docs/screenshots/export-menu.png) |
+| Dashboard | Add Expense |
+| --- | --- |
+| ![Dashboard with expense summary and records](docs/screenshots/dashboard.png) | ![Add expense form](docs/screenshots/add-expense.png) |
+| Export Reports | Backup And Restore |
+| ![CSV and HTML export menu](docs/screenshots/export-menu.png) | ![Portable backup, restore, and tour menu](docs/screenshots/backup-menu.png) |
 
 ## Features
 
+- Learn the app with a first-launch guided tour that spotlights the dashboard, add button, search, export, and backup; replay it anytime from the ⋮ menu.
 - Add, edit, and delete business expense records.
-- Track vendor, amount, date, category, payment method, submitted-by, invoice number, notes, and status.
+- Scan an invoice with the camera or import an existing image to prefill expense details.
+- Run bundled OCR and QR/barcode recognition on-device; scanned invoice data is not uploaded.
+- Review extracted vendor, invoice number, date, total, GSTIN, and tax with confidence indicators before saving.
+- Reuse the category, payment method, and submitter from previously confirmed expenses for the same vendor.
+- Duplicate a previous expense to enter recurring or similar purchases faster.
+- Track vendor, amount, tax, supplier GSTIN, date, category, payment method, submitted-by, invoice number, notes, and status.
 - Attach a bill, receipt, or invoice file using Android's document picker.
 - View dashboard analytics for total spend, current month spend, paid amount, pending review count, and top category.
-- Search and filter by vendor, invoice, notes, category, and status.
+- Search, filter, and sort by vendor, invoice, notes, category, status, date, or amount.
+- Move draft, review, and approved expenses forward with quick status actions.
+- Detect duplicate invoice numbers before saving and confirm before discarding unsaved changes.
+- Choose dates with the native Android date picker.
 - Display all money values in INR.
-- Export records as CSV for spreadsheets.
-- Export a browser-readable HTML report that can be shared with anyone.
+- Export the current filtered and sorted view as CSV for spreadsheets.
+- Export the current view as a browser-readable HTML report that can be shared with anyone.
+- Use a custom adaptive launcher icon with Android themed-icon support.
 - Work offline with local device persistence.
+- Recover from a corrupted primary local-data snapshot using the previous valid snapshot.
+- Create a portable `.betbackup.zip` archive containing every expense and every readable attachment.
+- Keep a user-selected backup file updated automatically after each add, edit, delete, status change, or restore.
+- Restore a backup on the same or a different Android device, with a choice to merge records or replace local data.
 
 ## Expense Statuses
 
@@ -36,6 +57,10 @@ The app supports two export formats:
 - HTML report: best for sharing a readable report with owners, auditors, or stakeholders who do not have the app installed.
 
 The HTML export includes summary cards and a full expense table. The CSV export includes raw INR amounts and all key expense fields.
+
+## Privacy
+
+Expense records, imported images, OCR processing, and barcode recognition stay on the device. The app has no account system, analytics SDK, advertising SDK, or application backend. Android may download the optional ML Kit Document Scanner module through Google Play services. Data leaves the app only when the user explicitly exports, shares, or saves a backup.
 
 ## Tech Stack
 
@@ -73,10 +98,16 @@ app/build/outputs/apk/debug/app-debug.apk
 ./gradlew :app:testDebugUnitTest :app:lintDebug
 ```
 
+With an emulator or device connected, run the end-to-end user journeys:
+
+```bash
+./gradlew :app:connectedDebugAndroidTest
+```
+
 Full verification command:
 
 ```bash
-./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+./gradlew :app:assembleDebug :app:testDebugUnitTest :app:connectedDebugAndroidTest :app:lintDebug
 ```
 
 ## Project Structure
@@ -88,6 +119,10 @@ app/src/main/java/com/dps/businessexpensetracker/
     ExpenseModels.kt              # Expense model, draft model, enums, validation
     ExpenseRepository.kt          # Local persistence
     ExpenseExporter.kt            # CSV and HTML export generation
+    ExpenseBackupManager.kt       # Portable ZIP backup, attachment copy, and restore validation
+    InvoiceExtraction.kt          # On-device OCR/barcode processing and field extraction
+  ui/
+    GuidedTour.kt                 # First-launch and replayable feature tour
   ui/theme/                       # Material theme
 
 docs/
@@ -107,25 +142,44 @@ Each expense stores:
 - Accounting status
 - Submitted by
 - Invoice number
+- Supplier GSTIN and tax amount
 - Attachment URI and attachment name
 - Notes
 - Last updated timestamp
 
+## Backup And Device Transfer
+
+Open the three-dot **Backup and restore** menu on the dashboard:
+
+1. Choose **Choose backup file**, select a safe folder, and save the suggested `.betbackup.zip` file.
+2. The app includes all expense fields and copies every readable attachment into the archive. It then updates that selected file after later transaction changes when the storage provider supports persistent access.
+3. Copy or send that single file to the new device.
+4. Install the app, choose **Restore from backup**, select the file, review the record and attachment counts, then choose **Merge** or **Replace**.
+
+**Merge** updates matching records by their stable ID and keeps unrelated local records. **Replace** removes the current local register before loading the backup. Keep the archive in protected storage because it contains financial data and invoice files. The app never uploads it automatically.
+
 ## Current Limitations
 
-- Data is stored locally on one device.
-- Attachments are referenced by Android document URI; files are not uploaded or copied into a backend.
-- There is no authentication, cloud sync, role-based approval, OCR, or audit log yet.
+- The live register is local to one device; transfer and recovery are performed with the portable backup file rather than cloud sync.
+- User-selected attachments are referenced by Android document URI during normal use; scanned and restored files are kept in app-private storage. Readable attachments are copied into backups. Nothing is uploaded to a backend.
+- Camera scanning uses the ML Kit Document Scanner module delivered by Google Play services; image import and bundled OCR remain available when that scanner module is unavailable.
+- There is no authentication, cloud sync, role-based approval, or audit log yet.
 - Exports include the saved attachment name and URI, but not the binary attachment file itself.
 
 ## Roadmap
 
 - Move persistence from SharedPreferences to Room.
 - Add cloud sync and role-based access for owner, CFO, accountant, and auditor.
-- Add OCR extraction for vendor, invoice number, amount, date, and tax details.
 - Add recurring expenses and reminders.
 - Add monthly PDF reports.
-- Add import/export backup workflows.
+
+## Contributing And Security
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security or privacy vulnerabilities privately using [SECURITY.md](SECURITY.md).
+
+## License
+
+Business Expense Tracker is available under the [MIT License](LICENSE).
 
 ## Contact
 

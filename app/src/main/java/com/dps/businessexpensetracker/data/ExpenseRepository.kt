@@ -11,7 +11,31 @@ class ExpenseRepository(context: Context) {
     )
 
     fun loadExpenses(): List<Expense> {
-        val raw = preferences.getString(KEY_EXPENSES, null) ?: return emptyList()
+        val primary = preferences.getString(KEY_EXPENSES, null)
+        val backup = preferences.getString(KEY_EXPENSES_BACKUP, null)
+        return parseExpenses(primary) ?: parseExpenses(backup) ?: emptyList()
+    }
+
+    fun saveExpenses(expenses: List<Expense>) {
+        val array = JSONArray()
+        expenses.forEach { array.put(it.toJson()) }
+        val newValue = array.toString()
+        val currentValue = preferences.getString(KEY_EXPENSES, null)
+        preferences.edit {
+            when {
+                parseExpenses(currentValue) != null -> {
+                    putString(KEY_EXPENSES_BACKUP, currentValue)
+                }
+                !preferences.contains(KEY_EXPENSES_BACKUP) -> {
+                    putString(KEY_EXPENSES_BACKUP, newValue)
+                }
+            }
+            putString(KEY_EXPENSES, newValue)
+        }
+    }
+
+    private fun parseExpenses(raw: String?): List<Expense>? {
+        if (raw == null) return null
         return runCatching {
             val array = JSONArray(raw)
             buildList {
@@ -19,16 +43,11 @@ class ExpenseRepository(context: Context) {
                     add(Expense.fromJson(array.getJSONObject(index)))
                 }
             }
-        }.getOrDefault(emptyList())
-    }
-
-    fun saveExpenses(expenses: List<Expense>) {
-        val array = JSONArray()
-        expenses.forEach { array.put(it.toJson()) }
-        preferences.edit { putString(KEY_EXPENSES, array.toString()) }
+        }.getOrNull()
     }
 
     private companion object {
         const val KEY_EXPENSES = "expenses_json"
+        const val KEY_EXPENSES_BACKUP = "expenses_json_backup"
     }
 }
