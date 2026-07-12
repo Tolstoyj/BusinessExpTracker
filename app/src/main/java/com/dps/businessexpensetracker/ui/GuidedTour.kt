@@ -99,33 +99,31 @@ data class TourStep(
  */
 fun expenseTourSteps(): List<TourStep> = listOf(
     TourStep(
-        title = "Welcome to Expense Tracker",
-        body = "Think of this app as your office expense register. Every bill goes in, " +
-            "gets reviewed, approved, and finally marked paid. This short tour shows " +
-            "where everything lives — it takes under a minute.",
+        title = "Welcome to Business Tracker",
+        body = "Keep expenses and daily sales together in one local business register. " +
+            "This short tour shows where everything lives — it takes under a minute.",
         icon = Icons.AutoMirrored.Outlined.ReceiptLong
     ),
     TourStep(
         title = "Your money at a glance",
-        body = "The dashboard always shows total spend, this month's spend, what is " +
-            "already paid, and what is still waiting on you. It updates by itself as " +
-            "you add expenses.",
+        body = "The dashboard shows operating cashflow, today's sales, received revenue, " +
+            "paid expenses, and pending sales. Switch between the Expenses and Sales " +
+            "ledgers directly below it.",
         icon = Icons.Outlined.Insights,
         targetKey = TourTargets.DASHBOARD
     ),
     TourStep(
-        title = "Start here: add a bill",
-        body = "This button is the heart of the app. Scan a paper invoice with the " +
-            "camera, import a photo you already have, or type the details in. Scanned " +
-            "invoices are read on your phone only — nothing is uploaded.",
+        title = "Add expenses or sales",
+        body = "In Expenses, scan a bill or enter it manually. In Sales, record daily " +
+            "revenue, payment status, customer, channel, quantity, tax, and discount. " +
+            "Invoice scanning stays on your phone.",
         icon = Icons.Outlined.Add,
         targetKey = TourTargets.ADD_EXPENSE
     ),
     TourStep(
         title = "Find any expense fast",
-        body = "Search by vendor, invoice number, or notes. The chips underneath filter " +
-            "by status and category, and change the sort order. Exports use whatever " +
-            "view you have filtered here.",
+        body = "Each ledger has its own search, status filters, category or channel " +
+            "filters, and sorting. Exports use the currently selected filtered ledger.",
         icon = Icons.Outlined.Search,
         targetKey = TourTargets.SEARCH_FILTERS
     ),
@@ -138,17 +136,15 @@ fun expenseTourSteps(): List<TourStep> = listOf(
     ),
     TourStep(
         title = "Keep your records safe",
-        body = "Everything is stored on this phone. From this menu you can save a backup " +
-            "file (with attachments) to your storage or cloud drive, and restore it on " +
-            "a new phone later.",
+        body = "Everything is stored on this phone. Backups now include both ledgers and " +
+            "expense attachments, and can restore older expense-only v1 backups too.",
         icon = Icons.Outlined.Backup,
         targetKey = TourTargets.BACKUP
     ),
     TourStep(
         title = "You're ready",
-        body = "Each expense moves through Draft → For review → Approved → Paid using " +
-            "one-tap actions on its card. Add your first bill with the + button. You " +
-            "can replay this tour anytime from the ⋮ menu.",
+        body = "Move expenses through review and payment, and sales through pending, " +
+            "received, or refunded. You can replay this tour anytime from the ⋮ menu.",
         icon = Icons.Outlined.CheckCircle
     )
 )

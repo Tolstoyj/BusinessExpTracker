@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextClearance
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.core.app.ActivityScenario
 import com.dps.businessexpensetracker.data.Expense
@@ -18,6 +19,9 @@ import com.dps.businessexpensetracker.data.ExpenseCategory
 import com.dps.businessexpensetracker.data.ExpenseRepository
 import com.dps.businessexpensetracker.data.ExpenseStatus
 import com.dps.businessexpensetracker.data.PaymentMethod
+import com.dps.businessexpensetracker.data.Sale
+import com.dps.businessexpensetracker.data.SaleStatus
+import com.dps.businessexpensetracker.data.SalesChannel
 import com.dps.businessexpensetracker.ui.GuidedTourPrefs
 import org.junit.After
 import org.junit.Before
@@ -75,6 +79,55 @@ class ExpenseUserJourneyTest {
 
         composeRule.onNodeWithText("Choose backup file").assertIsDisplayed()
         composeRule.onNodeWithText("Restore from backup").assertIsDisplayed()
+    }
+
+    @Test
+    fun addDailySaleUpdatesLedgerAndDashboard() {
+        composeRule.onNodeWithTag("ledger_sales").performClick()
+        composeRule.onNodeWithText("No sales yet").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Add sale").performClick()
+
+        composeRule.onNodeWithTag("sale_customer_field").performTextClearance()
+        composeRule.onNodeWithTag("sale_customer_field").performTextInput("Counter sale")
+        composeRule.onNodeWithTag("sale_amount_field").performTextInput("3500")
+        composeRule.onNodeWithTag("sale_sold_by_field").performTextInput("Owner")
+        composeRule.onNodeWithContentDescription("Save sale").performClick()
+
+        composeRule.onNodeWithText("Counter sale").assertIsDisplayed()
+        assertTrue(composeRule.onAllNodesWithText("₹3,500.00").fetchSemanticsNodes().isNotEmpty())
+    }
+
+    @Test
+    fun cashflowDashboardUsesReceivedSalesMinusPaidExpenses() {
+        scenario.onActivity { activity ->
+            ExpenseRepository(activity).apply {
+                saveExpenses(
+                    listOf(
+                        sampleExpense(
+                            id = "paid-expense",
+                            vendor = "Stock Supplier",
+                            amount = 1_000.0,
+                            date = "2026-06-30",
+                            status = ExpenseStatus.PAID
+                        )
+                    )
+                )
+                saveSales(
+                    listOf(
+                        sampleSale("received-sale", "Counter sales", 3_500.0, SaleStatus.RECEIVED),
+                        sampleSale("pending-sale", "Wholesale order", 500.0, SaleStatus.PENDING)
+                    )
+                )
+            }
+        }
+        scenario.recreate()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithText("Operating cashflow").assertIsDisplayed()
+        assertTrue(composeRule.onAllNodesWithText("₹2,500.00").fetchSemanticsNodes().isNotEmpty())
+        composeRule.onNodeWithTag("ledger_sales").performClick()
+        composeRule.onNodeWithText("Counter sales").assertIsDisplayed()
+        composeRule.onNodeWithText("Wholesale order").assertIsDisplayed()
     }
 
     @Test
@@ -274,5 +327,26 @@ class ExpenseUserJourneyTest {
         attachmentName = null,
         notes = "",
         updatedAt = 1L
+    )
+
+    private fun sampleSale(
+        id: String,
+        customer: String,
+        amount: Double,
+        status: SaleStatus
+    ) = Sale(
+        id = id,
+        customer = customer,
+        amount = amount,
+        channel = if (status == SaleStatus.PENDING) SalesChannel.WHOLESALE else SalesChannel.STORE,
+        paymentMethod = PaymentMethod.UPI,
+        date = "2026-07-13",
+        status = status,
+        reference = "REF-$id",
+        soldBy = "Owner",
+        quantity = if (status == SaleStatus.PENDING) 10 else 4,
+        taxAmount = null,
+        discountAmount = null,
+        notes = ""
     )
 }

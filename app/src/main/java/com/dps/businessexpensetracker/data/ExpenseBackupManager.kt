@@ -22,12 +22,14 @@ import java.util.zip.ZipOutputStream
 
 data class BackupWriteResult(
     val expenseCount: Int,
+    val salesCount: Int,
     val attachmentCount: Int,
     val missingAttachmentCount: Int
 )
 
 data class BackupRestoreResult(
     val expenses: List<Expense>,
+    val sales: List<Sale>,
     val attachmentCount: Int,
     val createdAt: String,
     internal val restoreDirectory: File
@@ -58,10 +60,11 @@ object ExpenseBackupManager {
     fun writeAutomaticBackup(
         context: Context,
         expenses: List<Expense>,
+        sales: List<Sale> = emptyList(),
         onFailure: ((Throwable) -> Unit)? = null
     ) {
         val uri = configuredBackupUri(context) ?: return
-        writeBackup(context, uri, expenses, onSuccess = {}, onFailure = { error ->
+        writeBackup(context, uri, expenses, sales, onSuccess = {}, onFailure = { error ->
             disableAutomaticBackup(context)
             onFailure?.invoke(error)
         })
@@ -71,6 +74,7 @@ object ExpenseBackupManager {
         context: Context,
         targetUri: Uri,
         expenses: List<Expense>,
+        sales: List<Sale> = emptyList(),
         onSuccess: (BackupWriteResult) -> Unit,
         onFailure: (Throwable) -> Unit
     ) {
@@ -78,7 +82,7 @@ object ExpenseBackupManager {
         executor.execute {
             val temporaryFile = File.createTempFile("expense-backup-", ".tmp", appContext.cacheDir)
             runCatching {
-                val result = createArchive(appContext, temporaryFile, expenses)
+                val result = createArchive(appContext, temporaryFile, expenses, sales)
                 require(temporaryFile.length() <= MAX_BACKUP_FILE_BYTES) {
                     "Backup is larger than the supported limit."
                 }
@@ -116,10 +120,13 @@ object ExpenseBackupManager {
     private fun createArchive(
         context: Context,
         target: File,
-        expenses: List<Expense>
+        expenses: List<Expense>,
+        sales: List<Sale>
     ): BackupWriteResult {
         require(expenses.size <= MAX_EXPENSES) { "Too many expenses for one backup." }
+        require(sales.size <= MAX_SALES) { "Too many sales for one backup." }
         val expenseArray = JSONArray()
+        val salesArray = JSONArray()
         var includedAttachments = 0
         var missingAttachments = 0
         var totalAttachmentBytes = 0L
@@ -157,7 +164,10 @@ object ExpenseBackupManager {
                 expenseArray.put(json)
             }
 
+            sales.forEach { sale -> salesArray.put(sale.toJson()) }
+
             zip.writeTextEntry(EXPENSES_ENTRY, expenseArray.toString())
+            zip.writeTextEntry(SALES_ENTRY, salesArray.toString())
             zip.writeTextEntry(
                 MANIFEST_ENTRY,
                 JSONObject()
@@ -165,6 +175,7 @@ object ExpenseBackupManager {
                     .put("schemaVersion", SCHEMA_VERSION)
                     .put("createdAt", OffsetDateTime.now().toString())
                     .put("expenseCount", expenses.size)
+                    .put("salesCount", sales.size)
                     .put("attachmentCount", includedAttachments)
                     .toString()
             )
@@ -172,6 +183,7 @@ object ExpenseBackupManager {
 
         return BackupWriteResult(
             expenseCount = expenses.size,
+            salesCount = sales.size,
             attachmentCount = includedAttachments,
             missingAttachmentCount = missingAttachments
         )
@@ -185,6 +197,7 @@ object ExpenseBackupManager {
         return runCatching {
             var manifestText: String? = null
             var expensesText: String? = null
+            var salesText: String? = null
             var entryCount = 0
             var restoredBytes = 0L
             val attachmentFiles = mutableMapOf<String, File>()
@@ -199,6 +212,7 @@ object ExpenseBackupManager {
                         when (entry.name) {
                             MANIFEST_ENTRY -> manifestText = zip.readTextWithLimit(MAX_MANIFEST_BYTES)
                             EXPENSES_ENTRY -> expensesText = zip.readTextWithLimit(MAX_EXPENSES_JSON_BYTES)
+                            SALES_ENTRY -> salesText = zip.readTextWithLimit(MAX_SALES_JSON_BYTES)
                             else -> if (entry.name.startsWith("attachments/") && !entry.isDirectory) {
                                 require(entry.name !in attachmentFiles) { "Duplicate attachment entry." }
                                 val destination = File(restoreDirectory, "attachment-$entryCount.bin")
@@ -219,7 +233,8 @@ object ExpenseBackupManager {
 
             val manifest = JSONObject(manifestText ?: error("Backup manifest is missing."))
             require(manifest.optString("format") == FORMAT_NAME) { "This is not an expense backup." }
-            require(manifest.optInt("schemaVersion") == SCHEMA_VERSION) {
+            val schemaVersion = manifest.optInt("schemaVersion")
+            require(schemaVersion in MIN_SUPPORTED_SCHEMA_VERSION..SCHEMA_VERSION) {
                 "This backup version is not supported."
             }
             val expenseArray = JSONArray(expensesText ?: error("Backup expense data is missing."))
@@ -251,6 +266,23 @@ object ExpenseBackupManager {
                     }
                 }
             }
+            val sales = if (schemaVersion >= 2) {
+                val salesArray = JSONArray(salesText ?: error("Backup sales data is missing."))
+                require(salesArray.length() <= MAX_SALES) { "Backup contains too many sales." }
+                val restoredSaleIds = mutableSetOf<String>()
+                buildList {
+                    for (index in 0 until salesArray.length()) {
+                        val sale = Sale.fromJson(salesArray.getJSONObject(index))
+                        validateRestoredSale(sale)
+                        require(restoredSaleIds.add(sale.id)) {
+                            "Backup contains duplicate sale IDs."
+                        }
+                        add(sale)
+                    }
+                }
+            } else {
+                emptyList()
+            }
             attachmentFiles
                 .filterKeys { it !in usedAttachments }
                 .values
@@ -258,6 +290,7 @@ object ExpenseBackupManager {
 
             BackupRestoreResult(
                 expenses = expenses,
+                sales = sales,
                 attachmentCount = usedAttachments.size,
                 createdAt = manifest.optString("createdAt"),
                 restoreDirectory = restoreDirectory
@@ -280,6 +313,29 @@ object ExpenseBackupManager {
         require(expense.taxAmount == null ||
             (expense.taxAmount.isFinite() && expense.taxAmount >= 0.0 && expense.taxAmount <= expense.amount)) {
             "Backup contains an invalid tax amount."
+        }
+    }
+
+    private fun validateRestoredSale(sale: Sale) {
+        require(sale.id.isNotBlank()) { "Backup contains a sale without an ID." }
+        require(sale.customer.isNotBlank() && sale.customer.length <= 500) {
+            "Backup contains an invalid customer."
+        }
+        require(sale.amount.isFinite() && sale.amount > 0.0) {
+            "Backup contains an invalid sale amount."
+        }
+        require(runCatching { LocalDate.parse(sale.date) }.isSuccess) {
+            "Backup contains an invalid sale date."
+        }
+        require(sale.quantity in 1..1_000_000) { "Backup contains an invalid quantity." }
+        require(sale.taxAmount == null ||
+            (sale.taxAmount.isFinite() && sale.taxAmount >= 0.0 && sale.taxAmount <= sale.amount)) {
+            "Backup contains an invalid sale tax amount."
+        }
+        require(sale.discountAmount == null ||
+            (sale.discountAmount.isFinite() && sale.discountAmount >= 0.0 &&
+                sale.discountAmount <= sale.amount)) {
+            "Backup contains an invalid discount amount."
         }
     }
 
@@ -336,14 +392,18 @@ object ExpenseBackupManager {
     private const val PREFERENCES_NAME = "expense_backup_preferences"
     private const val KEY_AUTOMATIC_BACKUP_URI = "automatic_backup_uri"
     private const val FORMAT_NAME = "business-expense-tracker-backup"
-    private const val SCHEMA_VERSION = 1
+    private const val SCHEMA_VERSION = 2
+    private const val MIN_SUPPORTED_SCHEMA_VERSION = 1
     private const val MANIFEST_ENTRY = "manifest.json"
     private const val EXPENSES_ENTRY = "expenses.json"
+    private const val SALES_ENTRY = "sales.json"
     private const val RESTORE_DIRECTORY = "expense_attachments"
     private const val MAX_EXPENSES = 50_000
+    private const val MAX_SALES = 100_000
     private const val MAX_ZIP_ENTRIES = 55_000
     private const val MAX_MANIFEST_BYTES = 1_000_000L
     private const val MAX_EXPENSES_JSON_BYTES = 25_000_000L
+    private const val MAX_SALES_JSON_BYTES = 35_000_000L
     private const val MAX_BACKUP_BYTES = 250_000_000L
     private const val MAX_BACKUP_FILE_BYTES = 275_000_000L
 }

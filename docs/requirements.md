@@ -5,6 +5,8 @@
 The first version is a local-first Android app for the CFO/accountant workflow.
 
 - Record business expenses from bills, invoices, receipts, and ad hoc spend.
+- Record daily business sales and their collection status.
+- Save customer or sale label, amount, date, channel, payment method, salesperson, quantity, reference, tax, discount, notes, and received/pending/refunded status.
 - Scan or import an invoice image, extract core fields on-device, and require user verification before saving.
 - Save vendor, amount, date, category, payment method, submitted-by, invoice number, notes, status, and an optional document attachment reference.
 - Save optional supplier GSTIN and tax amount extracted from invoices.
@@ -12,10 +14,12 @@ The first version is a local-first Android app for the CFO/accountant workflow.
 - Support sorting, duplicating a similar expense, duplicate-invoice detection, and quick status progression.
 - Track accounting status: draft, for review, approved, paid, rejected.
 - Show dashboard totals in INR for total spend, this month, pending review, paid amount, and top category.
+- Show operating cashflow as received sales minus paid expenses, with today's sales, monthly cashflow, received revenue, and pending collections.
 - Export the current filtered and sorted records as CSV or as a browser-readable HTML report.
 - Persist records on the device so the data remains available after app restarts.
 - Keep a previous valid local snapshot for recovery if the primary data becomes unreadable.
-- Create a portable ZIP backup containing the complete expense register and readable attachment files.
+- Create a portable ZIP backup containing the complete expense and sales registers plus readable expense attachment files.
+- Restore both schema-v2 business backups and schema-v1 expense-only backups.
 - Automatically refresh the user-selected backup after every transaction change when Android grants persistent file access.
 - Restore on the same or another device using either merge-by-record-ID or full replacement, after explicit user confirmation.
 

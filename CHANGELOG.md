@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## 2.0.0 - 2026-07-13
+
+### Added
+
+- First-class daily sales ledger alongside expenses.
+- Sales fields for customer, total, channel, collection status, payment method, salesperson, quantity, reference, tax, discount, and notes.
+- Received, pending, and refunded sales lifecycle with quick actions, editing, duplication, search, filters, and sorting.
+- Operating cashflow dashboard using received sales minus paid expenses, with today and monthly context.
+- Sales CSV and HTML reports with spreadsheet-injection protection and escaped user content.
+- Portable backup schema v2 containing sales while remaining compatible with v1 expense-only archives.
+- Sales validation, persistence, export, backup, cashflow, and end-to-end Android tests.
+
 ## 1.0.0 - 2026-07-12
 
 ### Added
