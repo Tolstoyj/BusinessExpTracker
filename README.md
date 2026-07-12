@@ -177,6 +177,12 @@ Open the three-dot **Backup and restore** menu on the dashboard:
 
 **Merge** updates matching expense and sale records by stable ID and keeps unrelated local records. **Replace** removes both current ledgers before loading the backup. Keep the archive in protected storage because it contains financial data and invoice files. The app never uploads it automatically.
 
+## Updating Without Data Loss
+
+Install a newer APK directly over the existing app—do not uninstall first. Android preserves the app-private expense database when the package ID and signing key match, and the app runs its idempotent migration before loading any records. The migration retains the original v1 preference keys, validates the register, saves a pre-migration snapshot, and then enables the sales schema. A one-time message confirms how many expenses were kept.
+
+Android will reject an APK signed with a different key rather than silently replacing the app. Uninstalling is not an update: it removes app-private data, so create a portable `.betbackup.zip` first when uninstalling or moving devices.
+
 ## Current Limitations
 
 - The live expense and sales registers are local to one device; transfer and recovery use the portable backup file rather than cloud sync.

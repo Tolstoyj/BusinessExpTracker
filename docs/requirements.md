@@ -18,6 +18,8 @@ The first version is a local-first Android app for the CFO/accountant workflow.
 - Export the current filtered and sorted records as CSV or as a browser-readable HTML report.
 - Persist records on the device so the data remains available after app restarts.
 - Keep a previous valid local snapshot for recovery if the primary data becomes unreadable.
+- Preserve existing records during same-package, same-signature APK updates and run idempotent schema migration before loading repositories.
+- Retain a validated pre-migration snapshot when upgrading legacy v1 expense data.
 - Create a portable ZIP backup containing the complete expense and sales registers plus readable expense attachment files.
 - Restore both schema-v2 business backups and schema-v1 expense-only backups.
 - Automatically refresh the user-selected backup after every transaction change when Android grants persistent file access.

@@ -88,6 +88,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -106,6 +107,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.dps.businessexpensetracker.data.Expense
+import com.dps.businessexpensetracker.data.AppDataMigration
 import com.dps.businessexpensetracker.data.ExpenseExport
 import com.dps.businessexpensetracker.data.ExpenseExportFormat
 import com.dps.businessexpensetracker.data.ExpenseExporter
@@ -171,6 +173,7 @@ private val SaleDraftStateSaver = Saver<SaleDraft, String>(
 @Composable
 private fun BusinessExpenseTrackerApp() {
     val context = LocalContext.current
+    val migrationResult = remember { AppDataMigration.migrate(context) }
     val repository = remember { ExpenseRepository(context) }
     var expenses by remember { mutableStateOf(sortedExpenses(repository.loadExpenses())) }
     var sales by remember { mutableStateOf(sortedSales(repository.loadSales())) }
@@ -193,6 +196,16 @@ private fun BusinessExpenseTrackerApp() {
     val editingSale = sales.firstOrNull { it.id == editingSaleId }
     val creatingSaleDraft = creatingSaleDraftState?.let(::saleDraftFromState)
     val pendingSaleDelete = sales.firstOrNull { it.id == pendingSaleDeleteId }
+
+    LaunchedEffect(migrationResult.migrated) {
+        if (migrationResult.migrated) {
+            Toast.makeText(
+                context,
+                "Update complete: ${migrationResult.preservedExpenseCount} expenses kept safely.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
 
     fun persist(updated: List<Expense>) {
         val sorted = sortedExpenses(updated)
