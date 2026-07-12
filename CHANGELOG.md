@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## 2.0.1 - 2026-07-13
+
+### Added
+
+- Explicit idempotent on-device data migration before repositories load.
+- Validated pre-migration snapshot of the v1 expense register.
+- Migration tests covering valid v1 data, corrupted-primary recovery, idempotence, and existing v2 sales.
+
+### Changed
+
+- Android `versionCode` is now 3 so the APK installs as an in-place update over v1 and v2.0.0.
+- A one-time confirmation reports how many existing expenses were preserved after migration.
+
 ## 2.0.0 - 2026-07-13
 
 ### Added
