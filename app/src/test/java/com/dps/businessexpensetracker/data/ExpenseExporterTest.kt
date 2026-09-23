@@ -55,6 +55,48 @@ class ExpenseExporterTest {
     }
 
     @Test
+    fun currencyFormatterKeepsInrFormattingAndAcceptsOtherCodes() {
+        val amount = 1234.5
+        assertEquals(inrCurrencyFormatter().format(amount), currencyFormatter("INR").format(amount))
+        assertEquals(inrCurrencyFormatter().format(amount), currencyFormatter("inr").format(amount))
+        assertEquals(Currency.getInstance("USD"), currencyFormatter("usd").currency)
+        assertEquals(Currency.getInstance("INR"), currencyFormatter("not-a-currency").currency)
+        assertEquals(Currency.getInstance("INR"), currencyFormatter("ZZZ").currency)
+    }
+
+    @Test
+    fun exportsUseTheRequestedCurrencyAndFallBackToInr() {
+        val csv = ExpenseExporter.create(
+            expenses = listOf(sampleExpense()),
+            format = ExpenseExportFormat.CSV,
+            currencyCode = "USD",
+            generatedAt = LocalDateTime.of(2026, 7, 8, 10, 30)
+        )
+        assertTrue(csv.content.contains("Amount (USD)"))
+        assertTrue(csv.content.contains("Tax Amount (USD)"))
+        assertTrue(csv.content.contains("Amount (INR)").not())
+
+        val html = ExpenseExporter.create(
+            expenses = listOf(sampleExpense()),
+            format = ExpenseExportFormat.HTML,
+            currencyCode = "eur",
+            generatedAt = LocalDateTime.of(2026, 7, 8, 10, 30)
+        )
+        assertTrue(html.content.contains("Currency: EUR"))
+        assertTrue(html.content.contains(currencyFormatter("EUR").format(1234.5)))
+        assertTrue(html.content.contains("Currency: INR").not())
+
+        val fallback = ExpenseExporter.create(
+            expenses = listOf(sampleExpense()),
+            format = ExpenseExportFormat.HTML,
+            currencyCode = "ZZZ",
+            generatedAt = LocalDateTime.of(2026, 7, 8, 10, 30)
+        )
+        assertTrue(fallback.content.contains("Currency: INR"))
+        assertTrue(fallback.content.contains(currencyFormatter("INR").format(1234.5)))
+    }
+
+    @Test
     fun csvExportNeutralizesSpreadsheetFormulas() {
         val export = ExpenseExporter.create(
             expenses = listOf(

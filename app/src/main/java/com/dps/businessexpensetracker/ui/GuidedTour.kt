@@ -75,6 +75,11 @@ object GuidedTourPrefs {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit { putBoolean(KEY_TOUR_SEEN, true) }
     }
+
+    fun resetTour(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit { putBoolean(KEY_TOUR_SEEN, false) }
+    }
 }
 
 /** Stable keys for the home-screen elements the tour can spotlight. */
@@ -297,13 +302,13 @@ private fun TourStepCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = step.title,
+                    text = tr(step.title),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
             }
             Text(
-                text = step.body,
+                text = tr(step.body),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -342,7 +347,7 @@ private fun TourStepCard(
                         onClick = onSkip,
                         modifier = Modifier.testTag("tour_skip")
                     ) {
-                        Text("Skip tour")
+                        Text(tr("Skip tour"))
                     }
                 }
                 Spacer(Modifier.weight(1f))
@@ -351,7 +356,7 @@ private fun TourStepCard(
                         onClick = onBack,
                         modifier = Modifier.testTag("tour_back")
                     ) {
-                        Text("Back")
+                        Text(tr("Back"))
                     }
                     Spacer(Modifier.width(8.dp))
                 }
@@ -359,7 +364,7 @@ private fun TourStepCard(
                     onClick = onNext,
                     modifier = Modifier.testTag("tour_next")
                 ) {
-                    Text(if (stepIndex == stepCount - 1) "Get started" else "Next")
+                    Text(tr(if (stepIndex == stepCount - 1) "Get started" else "Next"))
                 }
             }
         }

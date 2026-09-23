@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented here.
 
+## 2.1.0 - 2026-09-23
+
+### Added
+
+- Three-step first-launch onboarding for language, privacy, optional business name, and explicit home currency, followed by the guided product tour.
+- Ten selectable languages: English, Simplified Chinese, Spanish, Arabic, Hindi, Brazilian Portuguese, French, German, Japanese, and Turkish.
+- Right-to-left layout support for Arabic.
+- Settings screen for business name, language, home currency, tour replay, privacy, and backup status.
+- Configurable home currencies with consistent dashboard and export labelling.
+- New currency-neutral launcher icon and editable high-resolution source artwork.
+- Quick-start checklist for the first expense, sale, backup, and report.
+- Product and UX audit with a prioritized business-owner roadmap.
+
+### Changed
+
+- Android `versionCode` is now 4 for the multilingual v2.1 update.
+- INR remains the backward-compatible default; changing currency changes display/report labelling without mutating stored values.
+- Dashboard metrics and filters now adapt more cleanly to phone widths.
+- Transaction forms distinguish required and optional fields and keep a labelled save action visible.
+- Operating cashflow is explicitly described as received sales minus paid expenses, not accounting profit.
+
+### Migration
+
+- Existing installations receive a one-time currency confirmation so reports are not silently relabelled after upgrading.
+
 ## 2.0.1 - 2026-07-13
 
 ### Added

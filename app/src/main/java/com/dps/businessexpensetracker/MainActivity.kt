@@ -16,7 +16,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.IntentSenderRequest
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -54,7 +53,6 @@ import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FileDownload
-import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.automirrored.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.MoreVert
@@ -64,6 +62,7 @@ import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -88,6 +87,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -100,11 +100,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.core.net.toUri
 import com.dps.businessexpensetracker.data.Expense
 import com.dps.businessexpensetracker.data.AppDataMigration
@@ -126,7 +128,6 @@ import com.dps.businessexpensetracker.data.SalesExporter
 import com.dps.businessexpensetracker.data.ExtractionConfidence
 import com.dps.businessexpensetracker.data.InvoiceExtractionResult
 import com.dps.businessexpensetracker.data.InvoiceScanProcessor
-import com.dps.businessexpensetracker.data.inrCurrencyFormatter
 import com.dps.businessexpensetracker.data.isDuplicateInvoiceNumber
 import com.dps.businessexpensetracker.data.expenseDraftFromState
 import com.dps.businessexpensetracker.data.toStateString
@@ -135,8 +136,20 @@ import com.dps.businessexpensetracker.data.saleDraftFromState
 import com.dps.businessexpensetracker.data.validateSaleDraft
 import com.dps.businessexpensetracker.ui.GuidedTourOverlay
 import com.dps.businessexpensetracker.ui.GuidedTourPrefs
+import com.dps.businessexpensetracker.ui.AppLanguage
+import com.dps.businessexpensetracker.ui.AppLanguagePrefs
+import com.dps.businessexpensetracker.ui.BusinessProfile
+import com.dps.businessexpensetracker.ui.BusinessProfilePrefs
+import com.dps.businessexpensetracker.ui.LanguageOnboarding
+import com.dps.businessexpensetracker.ui.QuickStartChecklist
+import com.dps.businessexpensetracker.ui.quickStartProgress
+import com.dps.businessexpensetracker.ui.LocalAppLanguage
+import com.dps.businessexpensetracker.ui.LocalBusinessProfile
+import com.dps.businessexpensetracker.ui.SettingsScreen
 import com.dps.businessexpensetracker.ui.TourTargets
+import com.dps.businessexpensetracker.ui.businessCurrencyFormatter
 import com.dps.businessexpensetracker.ui.expenseTourSteps
+import com.dps.businessexpensetracker.ui.tr
 import com.dps.businessexpensetracker.ui.tourTarget
 import com.dps.businessexpensetracker.ui.theme.BusinessExpenseTrackerTheme
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
@@ -154,8 +167,55 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             BusinessExpenseTrackerTheme {
-                BusinessExpenseTrackerApp()
+                BusinessExpenseTrackerRoot()
             }
+        }
+    }
+}
+
+@Composable
+private fun BusinessExpenseTrackerRoot() {
+    val context = LocalContext.current
+    var language by remember { mutableStateOf(AppLanguagePrefs.language(context)) }
+    var onboardingComplete by remember {
+        mutableStateOf(AppLanguagePrefs.isOnboardingComplete(context))
+    }
+    var businessProfile by remember { mutableStateOf(BusinessProfilePrefs.load(context)) }
+
+    CompositionLocalProvider(
+        LocalAppLanguage provides language,
+        LocalBusinessProfile provides businessProfile,
+        LocalLayoutDirection provides if (language.isRtl) LayoutDirection.Rtl else LayoutDirection.Ltr
+    ) {
+        if (!onboardingComplete) {
+            LanguageOnboarding(
+                selectedLanguage = language,
+                initialProfile = businessProfile,
+                onLanguageSelected = {
+                    language = it
+                    AppLanguagePrefs.saveLanguage(context, it)
+                },
+                onComplete = { profile ->
+                    AppLanguagePrefs.completeOnboarding(context, language)
+                    businessProfile = profile
+                    BusinessProfilePrefs.save(context, profile)
+                    BusinessProfilePrefs.confirmHomeCurrency(context)
+                    onboardingComplete = true
+                }
+            )
+        } else {
+            BusinessExpenseTrackerApp(
+                language = language,
+                businessProfile = businessProfile,
+                onLanguageChange = {
+                    language = it
+                    AppLanguagePrefs.saveLanguage(context, it)
+                },
+                onBusinessProfileChange = {
+                    businessProfile = it
+                    BusinessProfilePrefs.save(context, it)
+                }
+            )
         }
     }
 }
@@ -171,7 +231,12 @@ private val SaleDraftStateSaver = Saver<SaleDraft, String>(
 )
 
 @Composable
-private fun BusinessExpenseTrackerApp() {
+private fun BusinessExpenseTrackerApp(
+    language: AppLanguage,
+    businessProfile: BusinessProfile,
+    onLanguageChange: (AppLanguage) -> Unit,
+    onBusinessProfileChange: (BusinessProfile) -> Unit
+) {
     val context = LocalContext.current
     val migrationResult = remember { AppDataMigration.migrate(context) }
     val repository = remember { ExpenseRepository(context) }
@@ -190,6 +255,7 @@ private fun BusinessExpenseTrackerApp() {
         mutableStateOf(ExpenseBackupManager.configuredBackupUri(context))
     }
     var pendingRestore by remember { mutableStateOf<BackupRestoreResult?>(null) }
+    var settingsVisible by rememberSaveable { mutableStateOf(false) }
     val editingExpense = expenses.firstOrNull { it.id == editingExpenseId }
     val creatingDraft = creatingDraftState?.let(::expenseDraftFromState)
     val pendingDelete = expenses.firstOrNull { it.id == pendingDeleteId }
@@ -396,6 +462,19 @@ private fun BusinessExpenseTrackerApp() {
     }
 
     when {
+        settingsVisible -> SettingsScreen(
+            language = language,
+            profile = businessProfile,
+            automaticBackupEnabled = automaticBackupUri != null,
+            onBack = { settingsVisible = false },
+            onLanguageChange = onLanguageChange,
+            onProfileChange = onBusinessProfileChange,
+            onReplayTour = {
+                GuidedTourPrefs.resetTour(context)
+                settingsVisible = false
+            }
+        )
+
         scanInProgress -> ScanningInvoiceScreen()
 
         creatingDraft != null || editingExpense != null -> {
@@ -479,6 +558,8 @@ private fun BusinessExpenseTrackerApp() {
                     Toast.makeText(context, "Automatic backup turned off.", Toast.LENGTH_SHORT)
                         .show()
                 },
+                businessProfile = businessProfile,
+                onOpenSettings = { settingsVisible = true },
                 onEditExpense = { editingExpenseId = it.id },
                 onDuplicateExpense = { expense ->
                     extractionReview = null
@@ -543,12 +624,12 @@ private fun BusinessExpenseTrackerApp() {
                         pendingDeleteId = null
                     }
                 ) {
-                    Text("Delete")
+                    Text(tr("Delete"))
                 }
             },
             dismissButton = {
                 TextButton(onClick = { pendingDeleteId = null }) {
-                    Text("Cancel")
+                    Text(tr("Cancel"))
                 }
             }
         )
@@ -565,10 +646,10 @@ private fun BusinessExpenseTrackerApp() {
                         persistSales(sales.filterNot { it.id == sale.id })
                         pendingSaleDeleteId = null
                     }
-                ) { Text("Delete") }
+                ) { Text(tr("Delete")) }
             },
             dismissButton = {
-                TextButton(onClick = { pendingSaleDeleteId = null }) { Text("Cancel") }
+                TextButton(onClick = { pendingSaleDeleteId = null }) { Text(tr("Cancel")) }
             }
         )
     }
@@ -654,7 +735,7 @@ private fun BusinessExpenseTrackerApp() {
                             pendingRestore = null
                         }
                     ) {
-                        Text("Cancel")
+                        Text(tr("Cancel"))
                     }
                 }
             }
@@ -677,6 +758,8 @@ private fun ExpenseHomeScreen(
     onBackupNow: () -> Unit,
     onRestoreBackup: () -> Unit,
     onDisableAutomaticBackup: () -> Unit,
+    businessProfile: BusinessProfile,
+    onOpenSettings: () -> Unit,
     onEditExpense: (Expense) -> Unit,
     onDuplicateExpense: (Expense) -> Unit,
     onStatusChange: (Expense, ExpenseStatus) -> Unit,
@@ -712,7 +795,9 @@ private fun ExpenseHomeScreen(
         tourStepIndex = 0
         GuidedTourPrefs.markTourSeen(context)
     }
-    val currencyFormatter = remember { inrCurrencyFormatter() }
+    val currencyFormatter = remember(businessProfile.currency) {
+        businessCurrencyFormatter(businessProfile.currency)
+    }
     val selectedLedger = LedgerView.entries.firstOrNull { it.name == selectedLedgerName }
         ?: LedgerView.EXPENSES
     val selectedStatus = ExpenseStatus.entries.firstOrNull { it.name == statusFilterName }
@@ -774,32 +859,30 @@ private fun ExpenseHomeScreen(
             matchesSearch && matchesStatus && matchesChannel
         }.sortedWith(selectedSaleSort.comparator)
     }
+    fun ledgerExport(format: ExpenseExportFormat) =
+        if (selectedLedger == LedgerView.EXPENSES) {
+            ExpenseExporter.create(
+                filteredExpenses,
+                format,
+                currencyCode = businessProfile.currency.code
+            )
+        } else {
+            SalesExporter.create(
+                filteredSales,
+                format,
+                currencyCode = businessProfile.currency.code
+            )
+        }
     val csvExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument(ExpenseExportFormat.CSV.mimeType),
         onResult = { uri ->
-            saveExportToUri(
-                context,
-                uri,
-                if (selectedLedger == LedgerView.EXPENSES) {
-                    ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.CSV)
-                } else {
-                    SalesExporter.create(filteredSales, ExpenseExportFormat.CSV)
-                }
-            )
+            saveExportToUri(context, uri, ledgerExport(ExpenseExportFormat.CSV))
         }
     )
     val htmlExportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument(ExpenseExportFormat.HTML.mimeType),
         onResult = { uri ->
-            saveExportToUri(
-                context,
-                uri,
-                if (selectedLedger == LedgerView.EXPENSES) {
-                    ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.HTML)
-                } else {
-                    SalesExporter.create(filteredSales, ExpenseExportFormat.HTML)
-                }
-            )
+            saveExportToUri(context, uri, ledgerExport(ExpenseExportFormat.HTML))
         }
     )
 
@@ -809,7 +892,7 @@ private fun ExpenseHomeScreen(
                 CenterAlignedTopAppBar(
                     title = {
                         Text(
-                            text = "Business Tracker",
+                            text = businessProfile.businessName.ifBlank { tr("Business Tracker") },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -826,7 +909,7 @@ private fun ExpenseHomeScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.Outlined.FileDownload,
-                                    contentDescription = "Export records"
+                                    contentDescription = tr("Export records")
                                 )
                             }
                             DropdownMenu(
@@ -834,27 +917,17 @@ private fun ExpenseHomeScreen(
                                 onDismissRequest = { exportMenuExpanded = false }
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Export current view as CSV") },
+                                    text = { Text(tr("Export current view as CSV")) },
                                     onClick = {
                                         exportMenuExpanded = false
-                                        val export = if (selectedLedger == LedgerView.EXPENSES) {
-                                            ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.CSV)
-                                        } else {
-                                            SalesExporter.create(filteredSales, ExpenseExportFormat.CSV)
-                                        }
-                                        csvExportLauncher.launch(export.fileName)
+                                        csvExportLauncher.launch(ledgerExport(ExpenseExportFormat.CSV).fileName)
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Export current view as HTML") },
+                                    text = { Text(tr("Export current view as HTML")) },
                                     onClick = {
                                         exportMenuExpanded = false
-                                        val export = if (selectedLedger == LedgerView.EXPENSES) {
-                                            ExpenseExporter.create(filteredExpenses, ExpenseExportFormat.HTML)
-                                        } else {
-                                            SalesExporter.create(filteredSales, ExpenseExportFormat.HTML)
-                                        }
-                                        htmlExportLauncher.launch(export.fileName)
+                                        htmlExportLauncher.launch(ledgerExport(ExpenseExportFormat.HTML).fileName)
                                     }
                                 )
                             }
@@ -868,7 +941,7 @@ private fun ExpenseHomeScreen(
                                 onDismissRequest = { dataMenuExpanded = false }
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Choose backup file") },
+                                    text = { Text(tr("Choose backup file")) },
                                     leadingIcon = { Icon(Icons.Outlined.Backup, contentDescription = null) },
                                     onClick = {
                                         dataMenuExpanded = false
@@ -877,7 +950,7 @@ private fun ExpenseHomeScreen(
                                 )
                                 if (automaticBackupEnabled) {
                                     DropdownMenuItem(
-                                        text = { Text("Update backup now") },
+                                        text = { Text(tr("Update backup now")) },
                                         leadingIcon = {
                                             Icon(Icons.Outlined.CheckCircle, contentDescription = null)
                                         },
@@ -888,7 +961,7 @@ private fun ExpenseHomeScreen(
                                     )
                                 }
                                 DropdownMenuItem(
-                                    text = { Text("Restore from backup") },
+                                    text = { Text(tr("Restore from backup")) },
                                     leadingIcon = { Icon(Icons.Outlined.Restore, contentDescription = null) },
                                     onClick = {
                                         dataMenuExpanded = false
@@ -898,7 +971,7 @@ private fun ExpenseHomeScreen(
                                 if (automaticBackupEnabled) {
                                     HorizontalDivider()
                                     DropdownMenuItem(
-                                        text = { Text("Turn off automatic backup") },
+                                        text = { Text(tr("Turn off automatic backup")) },
                                         onClick = {
                                             dataMenuExpanded = false
                                             onDisableAutomaticBackup()
@@ -907,7 +980,7 @@ private fun ExpenseHomeScreen(
                                 }
                                 HorizontalDivider()
                                 DropdownMenuItem(
-                                    text = { Text("Replay app tour") },
+                                    text = { Text(tr("Replay app tour")) },
                                     leadingIcon = {
                                         Icon(
                                             Icons.AutoMirrored.Outlined.HelpOutline,
@@ -918,6 +991,16 @@ private fun ExpenseHomeScreen(
                                         dataMenuExpanded = false
                                         tourStepIndex = 0
                                         tourActive = true
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(tr("Settings")) },
+                                    leadingIcon = {
+                                        Icon(Icons.Outlined.Settings, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        dataMenuExpanded = false
+                                        onOpenSettings()
                                     }
                                 )
                             }
@@ -965,6 +1048,24 @@ private fun ExpenseHomeScreen(
                         )
                     }
                 }
+                val quickStart = quickStartProgress(
+                    businessName = businessProfile.businessName,
+                    currencyConfirmed = BusinessProfilePrefs.isCurrencyConfirmed(context),
+                    saleCount = sales.size,
+                    expenseCount = expenses.size,
+                    backupConfigured = automaticBackupEnabled
+                )
+                if (!quickStart.isComplete) {
+                    item {
+                        QuickStartChecklist(
+                            progress = quickStart,
+                            onOpenProfile = onOpenSettings,
+                            onAddSale = onAddSale,
+                            onAddExpense = onAddExpense,
+                            onChooseBackup = onChooseBackupFile
+                        )
+                    }
+                }
 
                 item {
                     LedgerSelector(
@@ -1009,7 +1110,7 @@ private fun ExpenseHomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Expenses",
+                            text = tr("Expenses"),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -1071,7 +1172,7 @@ private fun ExpenseHomeScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Daily sales", style = MaterialTheme.typography.titleMedium,
+                            Text(tr("Daily sales"), style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.SemiBold)
                             Text(recordCountLabel(filteredSales.size),
                                 style = MaterialTheme.typography.labelLarge,
@@ -1150,13 +1251,13 @@ private fun ScanningInvoiceScreen() {
             CircularProgressIndicator()
             Spacer(Modifier.height(20.dp))
             Text(
-                text = "Reading invoice",
+                text = tr("Reading invoice"),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Extracting fields, checking totals and looking for QR data…",
+                text = tr("Extracting fields, checking totals and looking for QR data…"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1178,12 +1279,12 @@ private fun AddExpenseOptions(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text(
-            text = "Add an expense",
+            text = tr("Add an expense"),
             style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.SemiBold
         )
         Text(
-            text = "Scan a bill to prefill the details, or enter them yourself.",
+            text = tr("Scan a bill to prefill the details, or enter them yourself."),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1209,13 +1310,13 @@ private fun AddExpenseOptions(
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Text(
-                        text = "Scan invoice",
+                        text = tr("Scan invoice"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        text = "Camera or gallery · processed on device",
+                        text = tr("Camera or gallery · processed on device"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -1237,12 +1338,12 @@ private fun AddExpenseOptions(
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Text(
-                        text = "Import invoice image",
+                        text = tr("Import invoice image"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Use an existing photo from this device",
+                        text = tr("Use an existing photo from this device"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1264,12 +1365,12 @@ private fun AddExpenseOptions(
                 Spacer(Modifier.width(14.dp))
                 Column {
                     Text(
-                        text = "Enter manually",
+                        text = tr("Enter manually"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Use the standard expense form",
+                        text = tr("Use the standard expense form"),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1301,8 +1402,13 @@ private fun DashboardSummary(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Operating cashflow",
+                    text = tr("Operating cashflow"),
                     style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+                Text(
+                    text = tr("Received sales minus paid expenses. Not accounting profit."),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
@@ -1310,62 +1416,73 @@ private fun DashboardSummary(
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 HorizontalDivider(
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.16f)
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(
-                        text = "This month cashflow",
+                        text = tr("This month cashflow"),
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
                         text = currencyFormatter.format(summary.thisMonthCashflow),
                         fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
         }
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            SummaryPill("Today sales", currencyFormatter.format(summary.todaySales))
-            SummaryPill("Received", currencyFormatter.format(summary.receivedSales))
-            SummaryPill("Paid expenses", currencyFormatter.format(summary.paidSpend))
-            SummaryPill("Pending sales", currencyFormatter.format(summary.pendingSales))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                tr("Today sales") to currencyFormatter.format(summary.todaySales),
+                tr("Received") to currencyFormatter.format(summary.receivedSales),
+                tr("Paid expenses") to currencyFormatter.format(summary.paidSpend),
+                tr("Pending sales") to currencyFormatter.format(summary.pendingSales)
+            ).chunked(2).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    row.forEach { (label, value) ->
+                        SummaryMetricCard(label, value, Modifier.weight(1f))
+                    }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun SummaryPill(label: String, value: String) {
+private fun SummaryMetricCard(label: String, value: String, modifier: Modifier = Modifier) {
     Surface(
-        shape = CircleShape,
+        modifier = modifier,
+        shape = MaterialTheme.shapes.medium,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
             Text(
                 text = value,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -1402,21 +1519,13 @@ private fun SearchAndFilters(
                     }
                 }
             },
-            label = { Text("Search vendor, invoice, notes") }
+            label = { Text(tr("Search vendor, invoice, notes")) }
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(
-                imageVector = Icons.Outlined.FilterList,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
             FilterMenuButton(
                 label = "Status",
                 selectedText = ExpenseStatus.entries
@@ -1443,7 +1552,7 @@ private fun SearchAndFilters(
                 showSortIcon = true
             )
             if (hasActiveFilters) {
-                TextButton(onClick = onClearFilters) { Text("Clear") }
+                TextButton(onClick = onClearFilters) { Text(tr("Clear")) }
             }
         }
     }
@@ -1462,7 +1571,7 @@ private fun FilterMenuButton(
     Box {
         OutlinedButton(
             onClick = { expanded = true },
-            modifier = Modifier.testTag("filter_button_$label")
+            modifier = Modifier.fillMaxWidth().testTag("filter_button_$label")
         ) {
             if (showSortIcon) {
                 Icon(
@@ -1472,7 +1581,12 @@ private fun FilterMenuButton(
                 )
                 Spacer(Modifier.width(6.dp))
             }
-            Text("$label: $selectedText", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "${tr(label)}: ${tr(selectedText)}",
+                modifier = Modifier.weight(1f, fill = false),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
             Spacer(Modifier.width(6.dp))
             Icon(
                 imageVector = Icons.Outlined.ExpandMore,
@@ -1484,7 +1598,7 @@ private fun FilterMenuButton(
             options.forEach { (value, text) ->
                 DropdownMenuItem(
                     modifier = Modifier.testTag("filter_option_${label}_$value"),
-                    text = { Text(text) },
+                    text = { Text(tr(text)) },
                     onClick = {
                         onSelected(value)
                         expanded = false
@@ -1537,7 +1651,12 @@ private fun LedgerSelector(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(Modifier.width(7.dp))
-                    Text("$label  $count", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${tr(label)}  $count",
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -1571,15 +1690,12 @@ private fun SalesSearchAndFilters(
                     }
                 }
             },
-            label = { Text("Search customer, reference") }
+            label = { Text(tr("Search customer, reference")) }
         )
-        Row(
-            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(Icons.Outlined.FilterList, contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant)
             FilterMenuButton(
                 label = "Sale status",
                 selectedText = SaleStatus.entries.firstOrNull { it.name == statusFilterName }
@@ -1602,7 +1718,7 @@ private fun SalesSearchAndFilters(
                 onSelected = onSortOptionChange,
                 showSortIcon = true
             )
-            if (hasActiveFilters) TextButton(onClick = onClearFilters) { Text("Clear") }
+            if (hasActiveFilters) TextButton(onClick = onClearFilters) { Text(tr("Clear")) }
         }
     }
 }
@@ -1622,21 +1738,21 @@ private fun EmptySalesState(
             Icon(Icons.Outlined.ShoppingCart, contentDescription = null,
                 modifier = Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
             Text(
-                if (hasSales) "No matching sales" else "No sales yet",
+                tr(if (hasSales) "No matching sales" else "No sales yet"),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                if (hasSales) "Try another search or clear the sales filters."
-                else "Record today's first sale to start tracking revenue and cashflow.",
+                tr(if (hasSales) "Try another search or clear the sales filters."
+                else "Record today's first sale to start tracking revenue and cashflow."),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (hasSales) OutlinedButton(onClick = onClearFilters) { Text("Clear filters") }
+            if (hasSales) OutlinedButton(onClick = onClearFilters) { Text(tr("Clear filters")) }
             else Button(onClick = onAddSale) {
                 Icon(Icons.Outlined.Add, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Add sale")
+                Text(tr("Add sale"))
             }
         }
     }
@@ -1663,26 +1779,26 @@ private fun EmptyExpenseState(
                 tint = MaterialTheme.colorScheme.primary
             )
             Text(
-                text = if (hasExpenses) "No matching expenses" else "No expenses yet",
+                text = tr(if (hasExpenses) "No matching expenses" else "No expenses yet"),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = if (hasExpenses) {
+                text = tr(if (hasExpenses) {
                     "Try a different search or clear your filters."
                 } else {
                     "Add your first bill or receipt to start tracking spend."
-                },
+                }),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             if (hasExpenses) {
-                OutlinedButton(onClick = onClearFilters) { Text("Clear filters") }
+                OutlinedButton(onClick = onClearFilters) { Text(tr("Clear filters")) }
             } else {
                 Button(onClick = onAddExpense) {
                     Icon(Icons.Outlined.Add, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Add expense")
+                    Text(tr("Add expense"))
                 }
             }
         }
@@ -1807,7 +1923,7 @@ private fun ExpenseListItem(
                             onDismissRequest = { actionsExpanded = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Edit") },
+                                text = { Text(tr("Edit")) },
                                 leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                                 onClick = {
                                     actionsExpanded = false
@@ -1815,7 +1931,7 @@ private fun ExpenseListItem(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Duplicate") },
+                                text = { Text(tr("Duplicate")) },
                                 leadingIcon = {
                                     Icon(Icons.Outlined.ContentCopy, contentDescription = null)
                                 },
@@ -1826,7 +1942,7 @@ private fun ExpenseListItem(
                             )
                             HorizontalDivider()
                             DropdownMenuItem(
-                                text = { Text("Delete") },
+                                text = { Text(tr("Delete")) },
                                 leadingIcon = {
                                     Icon(
                                         Icons.Outlined.Delete,
@@ -1921,12 +2037,12 @@ private fun SaleListItem(
                         onDismissRequest = { actionsExpanded = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Edit") },
+                            text = { Text(tr("Edit")) },
                             leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
                             onClick = { actionsExpanded = false; onEdit() }
                         )
                         DropdownMenuItem(
-                            text = { Text("Duplicate") },
+                            text = { Text(tr("Duplicate")) },
                             leadingIcon = {
                                 Icon(Icons.Outlined.ContentCopy, contentDescription = null)
                             },
@@ -1943,7 +2059,7 @@ private fun SaleListItem(
                         }
                         HorizontalDivider()
                         DropdownMenuItem(
-                            text = { Text("Delete") },
+                            text = { Text(tr("Delete")) },
                             leadingIcon = {
                                 Icon(Icons.Outlined.Delete, contentDescription = null,
                                     tint = MaterialTheme.colorScheme.error)
@@ -2051,6 +2167,16 @@ private fun SaleEditorScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
+        },
+        bottomBar = {
+            Surface(tonalElevation = 3.dp) {
+                Button(
+                    onClick = ::validateAndSave,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp)
+                ) {
+                    Text(tr("Save"))
+                }
+            }
         }
     ) { innerPadding ->
         LazyColumn(
@@ -2076,12 +2202,19 @@ private fun SaleEditorScreen(
                 }
             }
             item {
+                Text(
+                    tr("Required fields must be filled in. Optional fields can be left blank."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            item {
                 OutlinedTextField(
                     value = draft.customer,
                     onValueChange = { draft = draft.copy(customer = it); validationMessage = null },
                     modifier = Modifier.fillMaxWidth().testTag("sale_customer_field"),
                     singleLine = true,
-                    label = { Text("Customer or sale label") },
+                    label = { Text(markedField("Customer or sale label", required = true)) },
                     leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null) }
                 )
             }
@@ -2091,7 +2224,9 @@ private fun SaleEditorScreen(
                     onValueChange = { draft = draft.copy(amount = it); validationMessage = null },
                     modifier = Modifier.fillMaxWidth().testTag("sale_amount_field"),
                     singleLine = true,
-                    label = { Text("Total sale (INR)") },
+                    label = {
+                        Text(markedAmount("Total sale", LocalBusinessProfile.current.currency.code, required = true))
+                    },
                     leadingIcon = { Icon(Icons.Outlined.Payments, contentDescription = null) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
@@ -2099,7 +2234,7 @@ private fun SaleEditorScreen(
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     EnumDropdownField(
-                        label = "Channel",
+                        label = markedField("Channel", required = false),
                         selected = draft.channel,
                         options = SalesChannel.entries,
                         optionLabel = { it.label },
@@ -2107,7 +2242,7 @@ private fun SaleEditorScreen(
                         modifier = Modifier.weight(1f)
                     )
                     EnumDropdownField(
-                        label = "Status",
+                        label = markedField("Status", required = false),
                         selected = draft.status,
                         options = SaleStatus.entries,
                         optionLabel = { it.label },
@@ -2125,14 +2260,14 @@ private fun SaleEditorScreen(
                         modifier = Modifier.weight(1f)
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text("Date", style = MaterialTheme.typography.labelSmall,
+                            Text(markedField("Date", required = true), style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(draft.date, maxLines = 1)
                         }
                         Icon(Icons.Outlined.CalendarToday, contentDescription = "Choose sale date")
                     }
                     EnumDropdownField(
-                        label = "Payment",
+                        label = markedField("Payment", required = false),
                         selected = draft.paymentMethod,
                         options = PaymentMethod.entries,
                         optionLabel = { it.label },
@@ -2148,7 +2283,7 @@ private fun SaleEditorScreen(
                         onValueChange = { draft = draft.copy(quantity = it); validationMessage = null },
                         modifier = Modifier.weight(1f).testTag("sale_quantity_field"),
                         singleLine = true,
-                        label = { Text("Quantity") },
+                        label = { Text(markedField("Quantity", required = true)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                     )
                     OutlinedTextField(
@@ -2156,7 +2291,7 @@ private fun SaleEditorScreen(
                         onValueChange = { draft = draft.copy(soldBy = it); validationMessage = null },
                         modifier = Modifier.weight(1f).testTag("sale_sold_by_field"),
                         singleLine = true,
-                        label = { Text("Sold by") }
+                        label = { Text(markedField("Sold by", required = true)) }
                     )
                 }
             }
@@ -2170,7 +2305,7 @@ private fun SaleEditorScreen(
                     supportingText = {
                         if (duplicateReference) Text("Already used by another sale")
                     },
-                    label = { Text("Invoice / order reference (optional)") }
+                    label = { Text(markedField("Invoice / order reference", required = false)) }
                 )
             }
             item {
@@ -2180,7 +2315,7 @@ private fun SaleEditorScreen(
                         onValueChange = { draft = draft.copy(taxAmount = it); validationMessage = null },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        label = { Text("Tax (INR)") },
+                        label = { Text(markedAmount("Tax", LocalBusinessProfile.current.currency.code, required = false)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                     )
                     OutlinedTextField(
@@ -2191,7 +2326,7 @@ private fun SaleEditorScreen(
                         },
                         modifier = Modifier.weight(1f),
                         singleLine = true,
-                        label = { Text("Discount (INR)") },
+                        label = { Text(markedAmount("Discount", LocalBusinessProfile.current.currency.code, required = false)) },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                     )
                 }
@@ -2202,7 +2337,7 @@ private fun SaleEditorScreen(
                     onValueChange = { draft = draft.copy(notes = it) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
-                    label = { Text("Notes (optional)") },
+                    label = { Text(markedField("Notes", required = false)) },
                     leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Notes, contentDescription = null) }
                 )
             }
@@ -2215,11 +2350,6 @@ private fun SaleEditorScreen(
                         Text(message, modifier = Modifier.fillMaxWidth().padding(12.dp),
                             color = MaterialTheme.colorScheme.onErrorContainer)
                     }
-                }
-            }
-            item {
-                Button(onClick = ::validateAndSave, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (initialDraft.id == null) "Add sale" else "Save changes")
                 }
             }
         }
@@ -2332,6 +2462,27 @@ private fun ExpenseEditorScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
+        },
+        bottomBar = {
+            Surface(tonalElevation = 3.dp) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = ::requestCancel,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(tr("Cancel"))
+                    }
+                    Button(
+                        onClick = ::validateAndSave,
+                        modifier = Modifier.weight(1f).testTag("save_expense")
+                    ) {
+                        Text(tr("Save"))
+                    }
+                }
+            }
         }
     ) { innerPadding ->
         LazyColumn(
@@ -2347,6 +2498,13 @@ private fun ExpenseEditorScreen(
                 }
             }
             item {
+                Text(
+                    tr("Required fields must be filled in. Optional fields can be left blank."),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            item {
                 OutlinedTextField(
                     value = draft.vendor,
                     onValueChange = {
@@ -2357,7 +2515,7 @@ private fun ExpenseEditorScreen(
                         .fillMaxWidth()
                         .testTag("vendor_field"),
                     singleLine = true,
-                    label = { Text("Vendor") },
+                    label = { Text(markedField("Vendor", required = true)) },
                     leadingIcon = { Icon(Icons.Outlined.Business, contentDescription = null) }
                 )
             }
@@ -2372,7 +2530,7 @@ private fun ExpenseEditorScreen(
                         .fillMaxWidth()
                         .testTag("amount_field"),
                     singleLine = true,
-                    label = { Text("Amount (INR)") },
+                    label = { Text(markedAmount("Amount", LocalBusinessProfile.current.currency.code, required = true)) },
                     leadingIcon = { Icon(Icons.Outlined.Payments, contentDescription = null) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
@@ -2380,7 +2538,7 @@ private fun ExpenseEditorScreen(
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     EnumDropdownField(
-                        label = "Category",
+                        label = markedField("Category", required = false),
                         selected = draft.category,
                         options = ExpenseCategory.entries,
                         optionLabel = { it.label },
@@ -2388,7 +2546,7 @@ private fun ExpenseEditorScreen(
                         modifier = Modifier.weight(1f)
                     )
                     EnumDropdownField(
-                        label = "Status",
+                        label = markedField("Status", required = false),
                         selected = draft.status,
                         options = ExpenseStatus.entries,
                         optionLabel = { it.label },
@@ -2407,7 +2565,7 @@ private fun ExpenseEditorScreen(
                             .testTag("date_field"),
                         singleLine = true,
                         readOnly = true,
-                        label = { Text("Date") },
+                        label = { Text(markedField("Date", required = true)) },
                         trailingIcon = {
                             IconButton(
                                 onClick = {
@@ -2425,7 +2583,7 @@ private fun ExpenseEditorScreen(
                         }
                     )
                     EnumDropdownField(
-                        label = "Payment",
+                        label = markedField("Payment", required = false),
                         selected = draft.paymentMethod,
                         options = PaymentMethod.entries,
                         optionLabel = { it.label },
@@ -2445,7 +2603,7 @@ private fun ExpenseEditorScreen(
                         .fillMaxWidth()
                         .testTag("submitted_by_field"),
                     singleLine = true,
-                    label = { Text("Submitted by") },
+                    label = { Text(markedField("Submitted by", required = true)) },
                     leadingIcon = { Icon(Icons.Outlined.Person, contentDescription = null) }
                 )
             }
@@ -2461,7 +2619,7 @@ private fun ExpenseEditorScreen(
                         .testTag("invoice_field"),
                     singleLine = true,
                     isError = duplicateInvoice,
-                    label = { Text("Invoice number") },
+                    label = { Text(markedField("Invoice number", required = false)) },
                     supportingText = {
                         if (duplicateInvoice) Text("Already used by another expense")
                     },
@@ -2479,8 +2637,8 @@ private fun ExpenseEditorScreen(
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Supplier GSTIN") },
-                    supportingText = { Text("Optional · 15 characters") },
+                    label = { Text(markedField("Supplier GSTIN", required = false)) },
+                    supportingText = { Text(tr("15 characters")) },
                     leadingIcon = {
                         Icon(Icons.AutoMirrored.Outlined.ReceiptLong, contentDescription = null)
                     }
@@ -2495,7 +2653,7 @@ private fun ExpenseEditorScreen(
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Tax amount (INR)") },
+                    label = { Text(markedAmount("Tax amount", LocalBusinessProfile.current.currency.code, required = false)) },
                     leadingIcon = { Icon(Icons.Outlined.Payments, contentDescription = null) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
                 )
@@ -2523,34 +2681,9 @@ private fun ExpenseEditorScreen(
                         .fillMaxWidth()
                         .height(128.dp)
                         .testTag("notes_field"),
-                    label = { Text("Notes") },
+                    label = { Text(markedField("Notes", required = false)) },
                     leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Notes, contentDescription = null) }
                 )
-            }
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = ::requestCancel,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Outlined.Close, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Cancel")
-                    }
-                    Button(
-                        onClick = ::validateAndSave,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("save_expense")
-                    ) {
-                        Icon(Icons.Outlined.Save, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Save")
-                    }
-                }
             }
         }
     }
@@ -2733,7 +2866,7 @@ private fun AttachmentField(
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "Bill or invoice",
+                        text = markedField("Attachment", required = false),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2765,6 +2898,14 @@ private fun AttachmentField(
 }
 
 @Composable
+private fun markedField(label: String, required: Boolean): String =
+    "${tr(label)} · ${tr(if (required) "Required" else "Optional")}"
+
+@Composable
+private fun markedAmount(label: String, currencyCode: String, required: Boolean): String =
+    "${tr(label)} ($currencyCode) · ${tr(if (required) "Required" else "Optional")}"
+
+@Composable
 private fun <T : Enum<T>> EnumDropdownField(
     label: String,
     selected: T,
@@ -2785,7 +2926,7 @@ private fun <T : Enum<T>> EnumDropdownField(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(

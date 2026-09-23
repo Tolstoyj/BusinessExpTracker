@@ -17,6 +17,26 @@ fun inrCurrencyFormatter(): NumberFormat =
         currency = Currency.getInstance("INR")
     }
 
+fun currencyFormatter(currencyCode: String): NumberFormat {
+    val resolved = normalizedExportCurrency(currencyCode)
+    if (resolved == "INR") return inrCurrencyFormatter()
+    return NumberFormat.getCurrencyInstance(Locale.getDefault()).apply {
+        currency = Currency.getInstance(resolved)
+    }
+}
+
+internal fun normalizedExportCurrency(currencyCode: String): String {
+    val candidate = currencyCode.trim().uppercase(Locale.ROOT)
+    if (!candidate.matches(CURRENCY_CODE)) return "INR"
+    return try {
+        Currency.getInstance(candidate).currencyCode
+    } catch (_: IllegalArgumentException) {
+        "INR"
+    }
+}
+
+private val CURRENCY_CODE = Regex("^[A-Z]{3}$")
+
 enum class ExpenseExportFormat(
     val label: String,
     val mimeType: String,
@@ -36,13 +56,15 @@ object ExpenseExporter {
     fun create(
         expenses: List<Expense>,
         format: ExpenseExportFormat,
-        generatedAt: LocalDateTime = LocalDateTime.now()
+        generatedAt: LocalDateTime = LocalDateTime.now(),
+        currencyCode: String = "INR"
     ): ExpenseExport {
+        val resolvedCurrency = normalizedExportCurrency(currencyCode)
         val timestamp = generatedAt.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"))
         val fileName = "business-expenses-$timestamp.${format.extension}"
         val content = when (format) {
-            ExpenseExportFormat.CSV -> expenses.toCsv()
-            ExpenseExportFormat.HTML -> expenses.toHtmlReport(generatedAt)
+            ExpenseExportFormat.CSV -> expenses.toCsv(resolvedCurrency)
+            ExpenseExportFormat.HTML -> expenses.toHtmlReport(generatedAt, resolvedCurrency)
         }
         return ExpenseExport(
             fileName = fileName,
@@ -52,7 +74,7 @@ object ExpenseExporter {
     }
 }
 
-private fun List<Expense>.toCsv(): String {
+private fun List<Expense>.toCsv(currencyCode: String): String {
     val rows = buildList {
         add(
             listOf(
@@ -64,8 +86,8 @@ private fun List<Expense>.toCsv(): String {
                 "Payment Method",
                 "Status",
                 "Submitted By",
-                "Amount (INR)",
-                "Tax Amount (INR)",
+                "Amount ($currencyCode)",
+                "Tax Amount ($currencyCode)",
                 "Notes",
                 "Attachment Name",
                 "Attachment URI"
@@ -96,8 +118,8 @@ private fun List<Expense>.toCsv(): String {
     }
 }
 
-private fun List<Expense>.toHtmlReport(generatedAt: LocalDateTime): String {
-    val currencyFormatter = inrCurrencyFormatter()
+private fun List<Expense>.toHtmlReport(generatedAt: LocalDateTime, currencyCode: String): String {
+    val currencyFormatter = currencyFormatter(currencyCode)
     val summary = ExportSummary.from(this)
     val generatedText = generatedAt.format(DateTimeFormatter.ofPattern("dd MMM yyyy, hh:mm a"))
     val rows = joinToString("\n") { expense ->
@@ -206,7 +228,7 @@ private fun List<Expense>.toHtmlReport(generatedAt: LocalDateTime): String {
         <body>
           <main>
             <h1>Business Expense Report</h1>
-            <p class="meta">Generated $generatedText · Currency: INR · ${recordCountLabel()}</p>
+            <p class="meta">Generated $generatedText · Currency: $currencyCode · ${recordCountLabel()}</p>
             <section class="summary" aria-label="Summary">
               <div class="metric"><span>Total spend</span><strong>${currencyFormatter.format(summary.totalSpend).escapeHtml()}</strong></div>
               <div class="metric"><span>This month</span><strong>${currencyFormatter.format(summary.thisMonthSpend).escapeHtml()}</strong></div>

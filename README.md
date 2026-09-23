@@ -3,22 +3,29 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Android 10+](https://img.shields.io/badge/Android-10%2B-3DDC84.svg?logo=android&logoColor=white)](https://developer.android.com/about/versions/10)
 
-**[Download the latest Android APK](https://github.com/Tolstoyj/BusinessExpTracker/releases/latest)**
+**[Download Business Expense Tracker v2.1.0 APK](https://github.com/Tolstoyj/BusinessExpTracker/releases/download/v2.1.0/BusinessExpenseTracker-v2.1.0.apk)** · [View the latest release](https://github.com/Tolstoyj/BusinessExpTracker/releases/latest)
 
 Business Expense & Sales Tracker is a free, open-source, local-first Android application for tracking business spending, daily revenue, payment collection, operating cashflow, backups, and reports. It is designed for an owner, CFO, accountant, or finance operator who needs a practical business register without uploading financial data to an application backend.
 
 ## Screenshots
 
-| Dashboard | Add Expense |
+| Language Onboarding | Dashboard |
 | --- | --- |
-| ![Dashboard with expense summary and records](docs/screenshots/dashboard.png) | ![Add expense form](docs/screenshots/add-expense.png) |
+| ![Choose an app language during first launch](docs/screenshots/onboarding.png) | ![Dashboard with expense summary and records](docs/screenshots/dashboard.png) |
+| Add Expense | Add Daily Sale |
+| ![Add expense form](docs/screenshots/add-expense.png) | ![Daily sale entry form](docs/screenshots/add-sale.png) |
 | Export Reports | Backup And Restore |
 | ![CSV and HTML export menu](docs/screenshots/export-menu.png) | ![Portable backup, restore, and tour menu](docs/screenshots/backup-menu.png) |
-| Sales Ledger | Add Daily Sale |
-| ![Daily sales ledger and operating cashflow](docs/screenshots/sales-ledger.png) | ![Daily sale entry form](docs/screenshots/add-sale.png) |
+| Sales Ledger | App Icon |
+| ![Daily sales ledger and operating cashflow](docs/screenshots/sales-ledger.png) | ![Business Expense Tracker app icon](docs/branding/business-tracker-icon-master.png) |
 
 ## Features
 
+- Start with a three-step onboarding flow for language, privacy, optional business name, and home currency in English, Simplified Chinese, Spanish, Arabic, Hindi, Brazilian Portuguese, French, German, Japanese, or Turkish; Arabic uses a right-to-left layout.
+- Customize the business name, app language, and home currency from a dedicated Settings screen.
+- Follow a quick-start checklist that guides a new business owner through the first expense, sale, backup, and report.
+- Use clearer required/optional field labels and persistent text save actions on transaction forms.
+- View responsive two-column dashboard metrics and full-width filter controls on phone screens.
 - Learn the app with a first-launch guided tour that spotlights the dashboard, add button, search, export, and backup; replay it anytime from the ⋮ menu.
 - Add, edit, and delete business expense records.
 - Add, edit, duplicate, filter, and delete daily sales records.
@@ -37,7 +44,7 @@ Business Expense & Sales Tracker is a free, open-source, local-first Android app
 - Move draft, review, and approved expenses forward with quick status actions.
 - Detect duplicate invoice numbers before saving and confirm before discarding unsaved changes.
 - Choose dates with the native Android date picker.
-- Display all money values in INR.
+- Display money values using the selected home currency while keeping INR as the backward-compatible default.
 - Export the current filtered and sorted expense or sales ledger as CSV.
 - Export either ledger as a browser-readable HTML report with its own summary.
 - Use a custom adaptive launcher icon with Android themed-icon support.
@@ -63,7 +70,7 @@ The app supports two export formats:
 - CSV: best for Excel, Google Sheets, accounting imports, and further analysis.
 - HTML report: best for sharing a readable report with owners, auditors, or stakeholders who do not have the app installed.
 
-The HTML export includes summary cards and a full expense table. The CSV export includes raw INR amounts and all key expense fields.
+The HTML export includes summary cards, the selected home-currency label, and a full expense table. The CSV export includes numeric amounts, a currency-labelled heading, and all key expense fields.
 
 ## Privacy
 
@@ -131,10 +138,16 @@ app/src/main/java/com/dps/businessexpensetracker/
     SalesModels.kt                # Sales ledger, statuses, channels, drafts, and validation
     SalesExporter.kt              # Sales CSV and HTML report generation
   ui/
+    BusinessSettings.kt           # Settings, business profile, currency, and backup preferences
     GuidedTour.kt                 # First-launch and replayable feature tour
+    LanguageOnboarding.kt         # Language, privacy, and business setup onboarding
+    Localization.kt               # Ten-language UI catalogue and locale helpers
+    QuickStart.kt                 # First-run business setup checklist
   ui/theme/                       # Material theme
 
 docs/
+  branding/                       # App-icon master artwork and previews
+  product-ux-audit.md             # Product-owner UX findings and prioritized roadmap
   requirements.md                 # Product requirements and assumptions
   screenshots/                    # README screenshots
 ```
@@ -144,7 +157,7 @@ docs/
 Each expense stores:
 
 - Vendor
-- Amount in INR
+- Amount in the business home currency
 - Category
 - Payment method
 - Expense date
@@ -159,7 +172,7 @@ Each expense stores:
 Each sale stores:
 
 - Customer or sale label
-- Final sale amount in INR
+- Final sale amount in the business home currency
 - Sales channel and payment method
 - Received, pending, or refunded status
 - Date, salesperson, quantity, and invoice/order reference

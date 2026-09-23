@@ -10,27 +10,29 @@ object SalesExporter {
     fun create(
         sales: List<Sale>,
         format: ExpenseExportFormat,
-        generatedAt: LocalDateTime = LocalDateTime.now()
+        generatedAt: LocalDateTime = LocalDateTime.now(),
+        currencyCode: String = "INR"
     ): ExpenseExport {
+        val resolvedCurrency = normalizedExportCurrency(currencyCode)
         val timestamp = generatedAt.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm"))
         return ExpenseExport(
             fileName = "business-sales-$timestamp.${format.extension}",
             mimeType = format.mimeType,
             content = when (format) {
-                ExpenseExportFormat.CSV -> sales.toSalesCsv()
-                ExpenseExportFormat.HTML -> sales.toSalesHtml(generatedAt)
+                ExpenseExportFormat.CSV -> sales.toSalesCsv(resolvedCurrency)
+                ExpenseExportFormat.HTML -> sales.toSalesHtml(generatedAt, resolvedCurrency)
             }
         )
     }
 }
 
-private fun List<Sale>.toSalesCsv(): String {
+private fun List<Sale>.toSalesCsv(currencyCode: String): String {
     val rows = buildList {
         add(
             listOf(
                 "Date", "Customer / Sale", "Reference", "Channel", "Payment Method",
-                "Status", "Sold By", "Quantity", "Sale Amount (INR)",
-                "Tax Amount (INR)", "Discount Amount (INR)", "Notes"
+                "Status", "Sold By", "Quantity", "Sale Amount ($currencyCode)",
+                "Tax Amount ($currencyCode)", "Discount Amount ($currencyCode)", "Notes"
             )
         )
         this@toSalesCsv.forEach { sale ->
@@ -57,8 +59,8 @@ private fun List<Sale>.toSalesCsv(): String {
     }
 }
 
-private fun List<Sale>.toSalesHtml(generatedAt: LocalDateTime): String {
-    val currencyFormatter = inrCurrencyFormatter()
+private fun List<Sale>.toSalesHtml(generatedAt: LocalDateTime, currencyCode: String): String {
+    val currencyFormatter = currencyFormatter(currencyCode)
     val currentMonth = YearMonth.now()
     val total = filterNot { it.status == SaleStatus.REFUNDED }.sumOf { it.amount }
     val received = filter { it.status == SaleStatus.RECEIVED }.sumOf { it.amount }
@@ -110,7 +112,7 @@ private fun List<Sale>.toSalesHtml(generatedAt: LocalDateTime): String {
         </head>
         <body><main>
           <h1>Business Sales Report</h1>
-          <p class="meta">Generated ${generatedText.salesHtml()} · Currency: INR · $countText</p>
+          <p class="meta">Generated ${generatedText.salesHtml()} · Currency: $currencyCode · $countText</p>
           <section class="summary">
             <div class="metric"><span>Total sales</span><strong>${currencyFormatter.format(total).salesHtml()}</strong></div>
             <div class="metric"><span>This month</span><strong>${currencyFormatter.format(month).salesHtml()}</strong></div>

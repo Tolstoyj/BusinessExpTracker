@@ -42,5 +42,31 @@ class SalesExporterTest {
         assertTrue(export.content.contains("&lt;paid&gt;"))
         assertFalse(export.content.contains("<paid>"))
         assertTrue(export.content.contains("Total sales"))
+        assertTrue(export.content.contains("Currency: INR"))
+    }
+
+    @Test
+    fun exportsUseTheRequestedCurrencyOnCsvAndHtml() {
+        val generatedAt = LocalDateTime.of(2026, 7, 13, 10, 30)
+        val csv = SalesExporter.create(
+            listOf(sale),
+            ExpenseExportFormat.CSV,
+            generatedAt,
+            currencyCode = "USD"
+        )
+        assertTrue(csv.content.contains("Sale Amount (USD)"))
+        assertTrue(csv.content.contains("Tax Amount (USD)"))
+        assertTrue(csv.content.contains("Discount Amount (USD)"))
+        assertTrue(csv.content.contains("Sale Amount (INR)").not())
+
+        val html = SalesExporter.create(
+            sales = listOf(sale),
+            format = ExpenseExportFormat.HTML,
+            generatedAt = generatedAt,
+            currencyCode = "eur"
+        )
+        assertTrue(html.content.contains("Currency: EUR"))
+        assertTrue(html.content.contains(currencyFormatter("EUR").format(sale.amount)))
+        assertTrue(html.content.contains("Currency: INR").not())
     }
 }
